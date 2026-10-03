@@ -120,4 +120,25 @@ object BuildCommands {
         println(row.filterKeys { it != "machine" })
         return 0
     }
+
+    /** S6: one IVF per frequent tag (ParlayANN's per-tag idea). */
+    fun buildPerTag(a: Args): Int {
+        val ds = FilteredDataset(a.path("data"), a.str("name", "yfcc"))
+        val attrs = loadStore(ds)
+        val loadStart = Machine.load()
+        val t0 = System.nanoTime()
+        val minCount = a.int("min-count", 10_000)
+        val pt = facetindex.ivf.PerTagIvf.build(ds.base, attrs, minCount, a.int("per-cell", 1000), a.int("max-cells", 4096),
+            a.int("sample-per-cell", 64), a.int("iters", 6), a.int("threads", 4)) { println(it) }
+        val secs = (System.nanoTime() - t0) / 1e9
+        pt.save(a.path("out"))
+        val row = linkedMapOf<String, Any?>(
+            "experiment" to "build_pertag", "dataset" to ds.name, "min_count" to minCount, "per_cell" to a.int("per-cell", 1000),
+            "max_cells" to a.int("max-cells", 4096), "tags_indexed" to pt.indexedTags.size, "build_s" to secs, "bytes" to pt.bytes(),
+            "file" to a.req("out"), "machine" to Machine.info, "load_start" to loadStart, "load_end" to Machine.load(), "repeats" to 1,
+        )
+        JsonlWriter(a.path("results")).use { it.write(row) }
+        println(row.filterKeys { it != "machine" })
+        return 0
+    }
 }

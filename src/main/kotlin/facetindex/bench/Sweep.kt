@@ -123,7 +123,13 @@ object Sweep {
         val searcher = a.pathOrNull("index")?.let { StaticSearcher(it) }
         val ivfs = a.list("ivf", "").associate { f -> IvfIndex.load(Path.of(f)).let { it.k to it } }
         val mode = FilterMode.valueOf(a.str("filter", "external").uppercase())
-        return Engine(ds.base, attrs, searcher, ivfs, mode) to searcher
+        val e = Engine(ds.base, attrs, searcher, ivfs, mode)
+        a.pathOrNull("pertag")?.let { f ->
+            val pt = facetindex.ivf.PerTagIvf.load(f)
+            val s6 = facetindex.ivf.PerTagIvfStrategy(ds.base, attrs, pt, PreFilterBruteForce(e))
+            e.extraStrategies["S6"] = { _ -> s6 }
+        }
+        return e to searcher
     }
 
     fun picks(a: Args, qs: QuerySet): IntArray {

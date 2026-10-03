@@ -65,7 +65,9 @@ class Fixture(val n: Int = 4000, val d: Int = 32, val nTags: Int = 60, seed: Int
         return nTags - 1
     }
 
-    fun engine(): Engine = Engine(store, attrs, object : SearcherSource {
+    val overlay = facetindex.data.OverlayStore(store)
+
+    fun engine(): Engine = Engine(overlay, attrs, object : SearcherSource {
         override fun <T> withSearcher(body: (IndexSearcher) -> T): T = index.withSearcher(body)
     }, mapOf(clusters to ivf))
 

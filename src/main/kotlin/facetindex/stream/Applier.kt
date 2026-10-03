@@ -70,6 +70,8 @@ class Applier(
     val ivf: IvfIndex?,
     val mode: AttrMode,
     private val clusterFields: Map<String, IvfIndex> = emptyMap(),
+    /** Receives vectors whose row is not (or differs from) the base file's. */
+    private val overlay: facetindex.data.OverlayStore? = null,
 ) {
     @Volatile
     private var versions = LongArray(1 shl 20) { -1 }
@@ -160,6 +162,7 @@ class Applier(
         attrs?.insert(id, tags)
         val q: QueryVector? = u8?.let { QueryVector.U8(it) } ?: f32?.let { QueryVector.F32(it) }
         if (q != null) {
+            overlay?.put(id, q)
             ivf?.insert(id, q)
             for (x in clusterFields.values) if (x !== ivf) x.insert(id, q)
         }

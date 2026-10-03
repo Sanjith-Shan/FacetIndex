@@ -33,7 +33,7 @@ $SpBin   = 'C:\SullaPortal\bin'
 $Proj    = 'facetindex'
 $Svc     = 'kafka'
 
-function Wsl([string]$cmd) { & wsl.exe -d $Distro -- bash -c $cmd }
+function Wsl([string]$cmd) { & wsl.exe -d $Distro --exec bash -c $cmd }
 
 function Get-Ports {
     $b = [int](& "$SpBin\ports.ps1" -Action claim -Project $Proj -Name kafka -Preferred 19092 | Select-Object -Last 1)
@@ -119,13 +119,13 @@ log.roll.hours=720
     $conf = $conf -replace "`r`n", "`n"
     if (-not (Test-Path $CfgWsl) -or [IO.File]::ReadAllText($CfgWsl) -ne $conf) { [IO.File]::WriteAllText($CfgWsl, $conf); Write-Host "wrote $CfgWsl" }
     # 5. Format storage (no-op if already formatted).
-    Wsl "bash $RunSh --format-only" | Out-Host
+    & wsl.exe -d $Distro --exec bash $RunSh --format-only | Out-Host
     $p
 }
 
 function Get-SvcCommand {
     @"
-& wsl.exe -d $Distro -- bash $RunSh
+& wsl.exe -d $Distro --exec bash $RunSh
 exit `$LASTEXITCODE
 "@
 }
@@ -136,18 +136,16 @@ function Wait-Broker([int]$port, [int]$sec = 120) {
     Set-ToolEnv
     $deadline = (Get-Date).AddSeconds($sec)
     while ((Get-Date) -lt $deadline) {
-        if (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) {
-            & "$Bin\kafka-broker-api-versions.bat" --bootstrap-server "127.0.0.1:$port" 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) { return $true }
+        if (Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort $port -ErrorAction SilentlyContinue) {
+            $out = & "$Bin\kafka-broker-api-versions.bat" --bootstrap-server "127.0.0.1:$port" 2>$null
+            if ("$out" -match '127\.0\.0\.1:\d+ \(id: 1') { return $true }
         }
         Start-Sleep -Seconds 2
     }
     $false
 }
 
-function Stop-BrokerInWsl {
-    Wsl "pkill -TERM -f 'kafka.Kafka /mnt/c/SullaPortal/data/facetindex/kafka/config/server-wsl.properties' && for i in `$(seq 1 60); do pgrep -f 'kafka.Kafka /mnt/c/SullaPortal' >/dev/null || break; sleep 1; done; true"
-}
+function Stop-BrokerInWsl { & wsl.exe -d $Distro --exec bash $RunSh --stop }
 
 function Invoke-Topics([string[]]$a) {
     Set-ToolEnv
@@ -173,13 +171,17 @@ switch ($Action) {
     }
 
     'stop' {
-        & "$SpBin\service.ps1" -Action stop -Project $Proj -Name $Svc
+        # Drop the supervisor's stop flag first so it does not restart the broker, then SIGTERM it
+        # inside WSL for a clean shutdown, then let service.ps1 finish (kills anything left).
+        $flag = "C:\SullaPortal\services\$Proj\$Svc\stop"
+        if (Test-Path (Split-Path $flag)) { New-Item -ItemType File -Force $flag | Out-Null }
         Stop-BrokerInWsl
+        & "$SpBin\service.ps1" -Action stop -Project $Proj -Name $Svc
     }
 
     'status' {
         & "$SpBin\service.ps1" -Action status -Project $Proj -Name $Svc
-        Wsl "pid=`$(pgrep -f 'kafka.Kafka /mnt/c/SullaPortal' | head -1); if [ -n `"`$pid`" ]; then ps -o pid,rss,pcpu,etime -p `$pid | awk 'NR==1{print `"broker (WSL):`", `$0} NR==2{printf `"broker (WSL): pid %s rss %.0f MB avgcpu %s%% up %s\n`", `$1, `$2/1024, `$3, `$4}'; else echo 'broker process not running in WSL'; fi"
+        & wsl.exe -d $Distro --exec bash $RunSh --status
         Invoke-Topics @('--list')
     }
 
@@ -193,7 +195,7 @@ switch ($Action) {
     }
 
     'remove' {
-        if (Test-Registered) { & "$SpBin\service.ps1" -Action stop -Project $Proj -Name $Svc }
+        if (Test-Registered) { & $PSCommandPath stop }
         Stop-BrokerInWsl
         & "$SpBin\service.ps1" -Action remove -Project $Proj -Name $Svc
         & "$SpBin\ports.ps1" -Action release -Project $Proj -Name kafka
