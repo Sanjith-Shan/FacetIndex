@@ -1,13 +1,13 @@
-build/
+/build/
 .gradle/
 .kotlin/
-data/
+/data/
 *.u8bin
 *.fbin
 *.ibin
 *.spmat
 *.gt100
-out/
+/out/
 .idea/
 *.iml
 __pycache__/
