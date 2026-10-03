@@ -139,6 +139,17 @@ class Planner(val models: List<ConfigModel>, val rule: Rule, val knob: Double) {
             return best ?: Triple(grid.last(), Double.NaN, Double.NaN)
         }
 
+        /** Loads models written by [save] (with the chosen knob stored beside them) as a LAGRANGE planner. */
+        fun load(path: Path, knob: Double): Planner {
+            val root = Json.mapper.readTree(path.toFile())
+            val models = root.map { n ->
+                fun arr2(f: String) = Array(2) { t -> n[f][t].map { if (it.isNull) Double.NaN else it.asDouble() }.toDoubleArray() }
+                ConfigModel(n["config"].asText(), n["config"].asText().substringBefore(':'), n["centers"].map { it.asDouble() }.toDoubleArray(),
+                    arr2("latency_us"), arr2("recall"), Array(2) { t -> n["counts"][t].map { it.asInt() }.toIntArray() })
+            }
+            return Planner(models, Rule.LAGRANGE, knob)
+        }
+
         fun save(models: List<ConfigModel>, path: Path) {
             Files.createDirectories(path.toAbsolutePath().parent)
             Files.writeString(path, Json.mapper.writerWithDefaultPrettyPrinter().writeValueAsString(models.map {

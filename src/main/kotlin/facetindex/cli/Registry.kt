@@ -12,6 +12,7 @@ object Registry {
         "sweep" to ("exp1/exp2: recall@10 and QPS per strategy configuration" to Sweep::run),
         "exp4" to ("official streaming runbook replay, scored the track's way" to facetindex.bench.RunbookBench::run),
         "exp5" to ("constructed filtered streaming workload: A1/A2/A3 x SetAttrs rates" to facetindex.bench.StreamBench::run),
+        "exp7" to ("range and tag-plus-range predicates on constructed attributes" to facetindex.bench.RangeBench::run),
         "exp3" to ("planner vs best fixed, FAISS rule and oracle" to facetindex.bench.PlannerBench::run),
     )
 }

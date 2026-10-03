@@ -38,18 +38,59 @@ class Engine(
     val searchers: SearcherSource?,
     val ivfs: Map<Int, IvfIndex> = emptyMap(),
     val filterMode: FilterMode = FilterMode.EXTERNAL,
+    val ranges: facetindex.attrs.RangeStore? = null,
 ) {
     /** Strategies added by later milestones (S5, S6), built from their spec parameters. */
     val extraStrategies = HashMap<String, (Map<String, String>) -> FilterStrategy>()
 
-    fun stats(p: Predicate): PredicateStats =
-        PredicateStats(attrs.matchCount(p.tags).toLong(), attrs.liveCount().toLong(), p.tags.size, exact = p.ranges.isEmpty())
+    /**
+     * Planner statistics. Tags alone: exact. With range clauses: each clause's count is exact (two
+     * binary searches), combined with the tag count under an independence assumption, so the result
+     * is an estimate ([PredicateStats.exact] false); exp7 measures its error.
+     */
+    fun stats(p: Predicate): PredicateStats {
+        val live = attrs.liveCount().toLong()
+        if (p.ranges.isEmpty()) return PredicateStats(attrs.matchCount(p.tags).toLong(), live, p.tags.size, exact = true)
+        val rs = ranges ?: error("range predicate but no range store")
+        var est = if (p.tags.isEmpty()) live.toDouble() else attrs.matchCount(p.tags).toDouble()
+        for (c in p.ranges) est *= rs.count(c).toDouble() / rs.n
+        return PredicateStats(Math.round(est), live, maxOf(1, p.tags.size), exact = false)
+    }
+
+    /** Exact count of rows passing tags and ranges (evaluation only; costs a pass over the smaller side). */
+    fun exactMatches(p: Predicate): Long = if (p.ranges.isEmpty()) attrs.matchCount(p.tags).toLong() else matching(p).longCardinality
+
+    /** Exact rows passing tags and ranges: walks the smaller of the tag set and the narrowest range slice. */
+    fun matching(p: Predicate): RoaringBitmap {
+        if (p.ranges.isEmpty()) return attrs.matching(p.tags)
+        val rs = ranges!!
+        if (p.tags.isEmpty()) return rs.matching(p.ranges)
+        val tagCount = attrs.matchCount(p.tags)
+        val rangeCount = p.ranges.minOf { rs.count(it) }
+        return if (tagCount <= rangeCount) {
+            val out = RoaringBitmap()
+            attrs.matching(p.tags).forEach { r: Int -> if (rs.pass(r, p.ranges)) out.add(r) }
+            out
+        } else {
+            val out = RoaringBitmap()
+            rs.matching(p.ranges).forEach { r: Int -> if (attrs.hasAll(r, p.tags)) out.add(r) }
+            out
+        }
+    }
+
+    fun passes(row: Int, p: Predicate): Boolean = attrs.hasAll(row, p.tags) && (p.ranges.isEmpty() || ranges!!.pass(row, p.ranges))
 
     fun luceneFilter(p: Predicate, mode: FilterMode = filterMode): Query? = when {
-        p.tags.isEmpty() -> null
-        mode == FilterMode.TERMS -> Filters.tagTerms(p.tags)
-        mode == FilterMode.DOCVALUES -> TagDocValuesQuery(p.tags)
-        else -> RowSetQuery(attrs.matching(p.tags), "tags")
+        p.tags.isEmpty() && p.ranges.isEmpty() -> null
+        mode == FilterMode.EXTERNAL -> RowSetQuery(matching(p), "predicate")
+        else -> {
+            // Lucene-side filters: tag terms or the tag doc value, plus each range as a LongField points query.
+            val tagQ = if (p.tags.isEmpty()) null else if (mode == FilterMode.TERMS) Filters.tagTerms(p.tags) else TagDocValuesQuery(p.tags)
+            if (p.ranges.isEmpty()) tagQ else org.apache.lucene.search.BooleanQuery.Builder().apply {
+                tagQ?.let { add(it, org.apache.lucene.search.BooleanClause.Occur.FILTER) }
+                for (c in p.ranges) add(org.apache.lucene.document.LongField.newRangeQuery(c.attr, c.lo, c.hi), org.apache.lucene.search.BooleanClause.Occur.FILTER)
+            }.build()
+        }
     }
 
     fun luceneQueryVector(q: QueryVector): Any = when (q) {
@@ -96,8 +137,8 @@ class PreFilterBruteForce(private val e: Engine) : FilterStrategy {
             val d = if (u8 != null && qb != null) u8.distInt(qb, r).toFloat() else e.store.dist(q, r)
             top.offer(d, r); scored++
         }
-        if (p.tags.isEmpty()) {
-            e.attrs.matching(p.tags).forEach { r: Int -> score(r) }
+        if (p.ranges.isNotEmpty() || p.tags.isEmpty()) {
+            e.matching(p).forEach { r: Int -> score(r) }
         } else {
             e.attrs.withPostings(p.tags) { bms ->
                 if (bms.any { it == null }) return@withPostings
@@ -122,7 +163,7 @@ class PostFilterHnsw(private val e: Engine) : FilterStrategy {
         val want = Math.ceil(k / sel * budget.safety).toLong()
         val fetch = want.coerceIn(maxOf(k, budget.ef).toLong(), budget.maxFetch.toLong()).toInt()
         val query = knnQuery(e, q, fetch, null, KnnSearchStrategy.Hnsw.DEFAULT)
-        return runKnn(e, query, fetch, k, { e.attrs.hasAll(it, p.tags) }, q)
+        return runKnn(e, query, fetch, k, { e.passes(it, p) }, q)
     }
 }
 
@@ -157,11 +198,22 @@ class IvfIntersect(private val e: Engine, private val clusters: Int) : FilterStr
         var scored = 0L
         val u8 = e.store as? U8Store
         val qb = (q as? QueryVector.U8)?.v
+        val rs = if (p.ranges.isEmpty()) null else e.ranges!!
         fun score(r: Int) {
+            if (rs != null && !rs.pass(r, p.ranges)) return
             val d = if (u8 != null && qb != null) u8.distInt(qb, r).toFloat() else e.store.dist(q, r)
             top.offer(d, r); scored++
         }
         if (p.tags.isEmpty()) {
+            if (rs != null) {
+                // Range only: walk the range's rows if they are fewer than the probed clusters.
+                val probed = java.util.BitSet(ivf.k).apply { probes.forEach { set(it) } }
+                val rangeCount = p.ranges.minOf { rs.count(it) }
+                if (rangeCount <= probes.sumOf { ivf.size(it).toLong() }) {
+                    rs.matching(p.ranges).forEach { r: Int -> if (probed.get(ivf.clusterOf(r))) score(r) }
+                    return top.result(scored)
+                }
+            }
             for (c in probes) ivf.withList(c) { it.forEach { r: Int -> score(r) } }
             return top.result(scored)
         }
@@ -202,6 +254,7 @@ class IvfAsLuceneFilter(private val e: Engine, private val clusters: Int) : Filt
         val filter = BooleanQuery.Builder().apply {
             add(IntField.newSetQuery(field, *probes), BooleanClause.Occur.FILTER)
             for (t in p.tags) add(org.apache.lucene.search.TermQuery(org.apache.lucene.index.Term(VectorIndex.F_TAG, t.toString())), BooleanClause.Occur.FILTER)
+            for (c in p.ranges) add(org.apache.lucene.document.LongField.newRangeQuery(c.attr, c.lo, c.hi), BooleanClause.Occur.FILTER)
         }.build()
         val lq = e.luceneQueryVector(q)
         return e.searchers!!.withSearcher { s ->

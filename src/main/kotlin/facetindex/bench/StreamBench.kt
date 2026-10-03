@@ -153,6 +153,7 @@ object StreamBench {
                     "S2" -> LuceneFilteredHnsw(e, "S2", 0) to SearchBudget(ef = a.int("ef", 64))
                     "S3" -> LuceneFilteredHnsw(e, "S3", 60) to SearchBudget(ef = a.int("ef", 64))
                     "S4" -> IvfIntersect(e, queryIvf) to SearchBudget(nprobe = a.int("nprobe", 32))
+                    "P" -> PlannedStrategy(e, facetindex.planner.Planner.load(a.path("planner-model"), a.double("planner-knob", 0.0))) to SearchBudget()
                     else -> PreFilterBruteForce(e) to SearchBudget()
                 }
             }
@@ -175,13 +176,13 @@ object StreamBench {
             val latency = qStrategies.associateWith { ConcurrentHistogram(3) }
             val loop = OpenLoop(q, 4)
             val loadThread = Thread({
-                loop.run(duration) { i, record ->
+                loop.run(duration) { i, record, due ->
                     val name = qStrategies[(i % qStrategies.size).toInt()]
                     val qi = ((i * 7919) % priv.n).toInt()
                     val (s, b) = strategies.getValue(name)
-                    val st = System.nanoTime()
                     s.search(priv.vector(qi), Predicate(priv.tagsOf(qi)), 10, b)
-                    if (record) latency.getValue(name).recordValue((System.nanoTime() - st) / 1000)
+                    // From the intended send time, so queueing behind slow queries counts.
+                    if (record) latency.getValue(name).recordValue(((System.nanoTime() - due) / 1000).coerceAtLeast(0))
                 }
             }, "query-load").apply { isDaemon = true; start() }
             // Checkpoints: recall of each strategy against exact answers over the live set.

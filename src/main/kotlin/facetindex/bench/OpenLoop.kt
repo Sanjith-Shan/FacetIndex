@@ -34,8 +34,11 @@ class OpenLoop(private val rate: Double, private val threads: Int) {
     private var stopFlag = false
     fun stop() { stopFlag = true }
 
-    /** Runs for [durationS] seconds after [warmupS] of unrecorded warm-up. [task] gets (arrival index, recorded). */
-    fun run(durationS: Double, warmupS: Double = 0.0, onWarmupEnd: () -> Unit = {}, task: (Long, Boolean) -> Unit) {
+    /**
+     * Runs for [durationS] seconds after [warmupS] of unrecorded warm-up. [task] gets (arrival index,
+     * recorded, intended send time on the nanoTime clock).
+     */
+    fun run(durationS: Double, warmupS: Double = 0.0, onWarmupEnd: () -> Unit = {}, task: (Long, Boolean, Long) -> Unit) {
         val pool = Executors.newFixedThreadPool(threads) { r -> Thread(r, "load").apply { isDaemon = true } } as ThreadPoolExecutor
         val interval = 1e9 / rate
         val start = System.nanoTime()
@@ -59,7 +62,7 @@ class OpenLoop(private val rate: Double, private val threads: Int) {
             if (record) issued++
             pool.execute {
                 try {
-                    task(idx, record)
+                    task(idx, record, due)
                     if (record) { latencyUs.recordValue(((System.nanoTime() - due) / 1000).coerceAtLeast(0)); completed.incrementAndGet() }
                 } catch (t: Throwable) {
                     if (record) errors.incrementAndGet()
@@ -77,3 +80,17 @@ fun Histogram.summary(): Map<String, Any?> = if (totalCount == 0L) mapOf("count"
     "count" to totalCount, "mean" to mean, "p50" to getValueAtPercentile(50.0), "p90" to getValueAtPercentile(90.0),
     "p99" to getValueAtPercentile(99.0), "p999" to getValueAtPercentile(99.9), "max" to maxValue,
 )
+
+/** The planner as a strategy: picks a configuration per query and runs it. */
+class PlannedStrategy(private val e: facetindex.strategy.Engine, private val planner: facetindex.planner.Planner) : facetindex.strategy.FilterStrategy {
+    override val name = "P"
+    private val strategies = HashMap<String, Pair<facetindex.strategy.FilterStrategy, facetindex.strategy.SearchBudget>>()
+
+    @Synchronized
+    private fun resolve(config: String) = strategies.getOrPut(config) { StrategySpec.parse(config).let { strategyFor(e, it) to it.budget() } }
+
+    override fun search(q: facetindex.data.QueryVector, p: facetindex.strategy.Predicate, k: Int, budget: facetindex.strategy.SearchBudget): facetindex.strategy.SearchResult {
+        val (s, b) = resolve(planner.choose(e.stats(p)).config)
+        return s.search(q, p, k, b)
+    }
+}

@@ -63,7 +63,9 @@ object BuildCommands {
         val to = a.int("to", ds.base.size)
         val threads = a.int("threads", 4)
         val ivfs = a.list("ivf", "").map { IvfIndex.load(Path.of(it)) }
+        val ranges = if (a.flag("ranges")) facetindex.attrs.RangeStore.constructed(ds.base, ds.base.size) else null
         val schema = IndexSchema(
+            rangeFields = ranges?.attributes?.toList() ?: emptyList(),
             tagTerms = a.flag("tag-terms", true), tagDocValues = a.flag("tag-dv", true),
             clusterFields = ivfs.map { VectorIndex.clusterField(it.k) },
             hnswM = a.int("m", 16), hnswBeam = a.int("beam", 100),
@@ -85,6 +87,7 @@ object BuildCommands {
                         idx.add(IndexItem(
                             row = r, byteVec = ds.base.luceneBytes(r), tags = csr.row(r),
                             clusters = ivfs.associate { VectorIndex.clusterField(it.k) to it.clusterOf(r) },
+                            ranges = ranges?.attributes?.associateWith { ranges.value(it, r) } ?: emptyMap(),
                         ))
                     }
                     if ((lo / batch) % 500 == 0) println("index: $lo / $to t=${"%.0f".format((System.nanoTime() - t0) / 1e9)}s")
@@ -95,6 +98,7 @@ object BuildCommands {
         pool.shutdown()
         idx.commit()
         val t1 = System.nanoTime()
+        idx.refreshNow()
         val segsBefore = idx.segmentCount()
         println("index: added ${to - from} docs in ${"%.0f".format((t1 - t0) / 1e9)}s, $segsBefore segments; force-merging")
         if (a.flag("force-merge", true)) { idx.forceMerge(1); idx.commit() }

@@ -105,6 +105,7 @@ class PerTagIvf(val minCount: Int, val perCell: Int, private val tags: Map<Int, 
  */
 class PerTagIvfStrategy(
     private val store: VectorStore,
+    private val ranges: facetindex.attrs.RangeStore?,
     private val attrs: AttributeStore,
     private val index: PerTagIvf,
     private val fallback: FilterStrategy,
@@ -123,6 +124,7 @@ class PerTagIvfStrategy(
         val u8 = store as? U8Store
         val qb = (q as? QueryVector.U8)?.v
         fun score(r: Int) {
+            if (p.ranges.isNotEmpty() && !ranges!!.pass(r, p.ranges)) return
             val d = if (u8 != null && qb != null) u8.distInt(qb, r).toFloat() else store.dist(q, r)
             top.offer(d, r); scored++
         }

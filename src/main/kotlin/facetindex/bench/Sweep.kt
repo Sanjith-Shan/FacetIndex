@@ -126,8 +126,15 @@ object Sweep {
         val e = Engine(ds.base, attrs, searcher, ivfs, mode)
         a.pathOrNull("pertag")?.let { f ->
             val pt = facetindex.ivf.PerTagIvf.load(f)
-            val s6 = facetindex.ivf.PerTagIvfStrategy(ds.base, attrs, pt, PreFilterBruteForce(e))
+            val s6 = facetindex.ivf.PerTagIvfStrategy(ds.base, null, attrs, pt, PreFilterBruteForce(e))
             e.extraStrategies["S6"] = { _ -> s6 }
+        }
+        a.pathOrNull("s5-index")?.let { f ->
+            // S5: the same predicate-subgraph searcher over a denser graph (M x gamma neighbours),
+            // built by Lucene's own graph builder; threshold 100 forces the filtered searcher.
+            val s5Searcher = StaticSearcher(f)
+            val e5 = Engine(ds.base, attrs, s5Searcher, ivfs, mode)
+            e.extraStrategies["S5"] = { params -> LuceneFilteredHnsw(e5, "S5", params["threshold"]?.toInt() ?: 100) }
         }
         return e to searcher
     }
