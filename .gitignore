@@ -1,0 +1,16 @@
+build/
+.gradle/
+.kotlin/
+data/
+*.u8bin
+*.fbin
+*.ibin
+*.spmat
+*.gt100
+out/
+.idea/
+*.iml
+__pycache__/
+.venv/
+.minipc-busy
+.minipc-runs/

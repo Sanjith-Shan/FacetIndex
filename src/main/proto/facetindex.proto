@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package facetindex.v1;
+
+option java_multiple_files = true;
+option java_package = "facetindex.api.v1";
+
+// One filter clause on an integer attribute: lo <= value <= hi.
+message Range {
+  string attr = 1;
+  int64 lo = 2;
+  int64 hi = 3;
+}
+
+// A conjunctive predicate: all tags must be present and all ranges must hold.
+message Predicate {
+  repeated int32 tags = 1;
+  repeated Range ranges = 2;
+}
+
+message SearchRequest {
+  // uint8 vectors travel as bytes, float vectors as repeated float.
+  bytes vector_u8 = 1;
+  repeated float vector_f32 = 2;
+  Predicate predicate = 3;
+  int32 k = 4;
+  // Empty: the planner chooses. Otherwise one of S0, S1, S2, S3, S4, S4L, S6.
+  string mode = 5;
+  int32 ef = 6;
+  int32 nprobe = 7;
+}
+
+message Hit {
+  int32 id = 1;
+  float distance = 2;
+}
+
+message SearchResponse {
+  repeated Hit hits = 1;
+  string strategy = 2;
+  int64 matches = 3;
+  double selectivity = 4;
+  int64 took_micros = 5;
+}
+
+message UpsertRequest {
+  int32 id = 1;
+  bytes vector_u8 = 2;
+  repeated float vector_f32 = 3;
+  repeated int32 tags = 4;
+  int64 version = 5;
+}
+
+message DeleteRequest {
+  int32 id = 1;
+  int64 version = 2;
+}
+
+message SetAttrsRequest {
+  int32 id = 1;
+  repeated int32 add = 2;
+  repeated int32 remove = 3;
+  int64 version = 4;
+}
+
+message Ack {
+  bool applied = 1;
+  int64 sequence = 2;
+}
+
+message StatsRequest {}
+
+message StatsResponse {
+  int64 live_items = 1;
+  int64 index_bytes = 2;
+  int32 segments = 3;
+  map<string, int64> counters = 4;
+}
+
+// The update stream payload: the same messages as the API, in one envelope.
+message CatalogEvent {
+  oneof body {
+    UpsertRequest insert = 1;
+    DeleteRequest delete = 2;
+    SetAttrsRequest set_attrs = 3;
+  }
+  // Producer wall clock (epoch micros) for freshness lag.
+  int64 produced_at_micros = 10;
+  // Position in the source workload, for idempotent replay.
+  int64 event_seq = 11;
+}
+
+service FacetIndex {
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc Upsert(UpsertRequest) returns (Ack);
+  rpc Delete(DeleteRequest) returns (Ack);
+  rpc SetAttrs(SetAttrsRequest) returns (Ack);
+  rpc Stats(StatsRequest) returns (StatsResponse);
+}
