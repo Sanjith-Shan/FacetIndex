@@ -20,6 +20,20 @@ Every measured number is in [`NUMBERS.md`](NUMBERS.md) with the results file it 
 design and its sources are in [`DESIGN.md`](DESIGN.md), bugs in [`BUG_LOG.md`](BUG_LOG.md), and a
 readable write-up in [`docs/WRITEUP.md`](docs/WRITEUP.md).
 
+## Results at a glance
+
+All on the 4-core mini PC; files in `results/`, every figure listed in `NUMBERS.md`.
+
+| | Result | File |
+|---|---|---|
+| Planner vs the track's FAISS baseline, same box and queries, 2 cores each | recall@10 0.912 at 1,151 QPS vs FAISS's best 210 QPS at recall >= 0.9: **5.5x** | `m3_exp3.jsonl`, `m1_faiss.jsonl` |
+| Planner vs the best single strategy, 4 threads | 2,945 QPS vs 493 (per-tag IVF) at recall >= 0.9: **6.0x** | `m3_exp3.jsonl`, `exp1_10m.jsonl` |
+| Which strategy wins where | brute force under 0.1% selectivity, IVF and per-tag IVF from 0.1% to 10%, post-filtering above 10%; Lucene's filtered HNSW reaches 0.9 everywhere but is fastest nowhere | `exp1_10m.jsonl` |
+| Attribute updates through Kafka (constructed workload) | external store: 10,000 SetAttrs/s applied with no backlog, 16.7 ms median to visible; tags as doc values: 235 s p99 to visible at 1,000/s | `exp5.jsonl` |
+
+The competition's leaderboard ran on an 8-vCPU Azure D8lds v5 (FAISS 3,253 QPS, winner 37,671 on
+private queries); those numbers are context only and are not comparable to any number above.
+
 ## What is measured, and how
 
 - **Queries.** Static results use a stratified sample of 10,000 private queries (2,000 from each of
