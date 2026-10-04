@@ -105,4 +105,5 @@ to them.
   measured). S6 (per-tag sub-indexes) was built and is measured.
 - **exp8** (the Azure D8lds v5 rerun): a ready runbook is in `scripts/azure_d8lds_v5.md`; it costs
   money and was not run.
+- A clean mixed-load p99 (exp6): both runs tried saturated the box (see `NUMBERS.md`).
 - The 1M-slice curves, the tombstone-drift experiment, and an upstream Lucene write-up.
