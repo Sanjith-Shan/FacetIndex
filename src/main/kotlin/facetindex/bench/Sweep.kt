@@ -212,7 +212,8 @@ object Sweep {
                 val row = summarize(res, wall, stats, picks.size, threads) + linkedMapOf(
                     "experiment" to a.str("experiment", "exp1"), "dataset" to ds.name, "query_set" to which,
                     "strategy" to spec.name, "config" to spec.label, "params" to spec.params, "k" to k, "threads" to threads,
-                    "filter_mode" to e.filterMode.name.lowercase(), "repeat" to rep, "repeats" to a.int("repeats", 1),
+                    "filter_mode" to e.filterMode.name.lowercase(), "repeat" to rep, "note" to a.str("note", ""),
+                    "query_sample" to (if (java.nio.file.Files.exists(ds.dir.resolve("SUBSET.txt"))) java.nio.file.Files.readAllLines(ds.dir.resolve("SUBSET.txt")).joinToString(" | ") else "all"), "repeats" to a.int("repeats", 1),
                     "machine" to Machine.info, "load_start" to loadStart, "load_end" to Machine.load(500),
                 )
                 out.write(row)

@@ -9,6 +9,8 @@ Y=$D/yfcc; Y1=$D/yfcc1m
 IVF4=$D/ivf/yfcc10m_c4096.ivf; IVF16=$D/ivf/yfcc10m_c16384.ivf
 PT=$D/ivf/yfcc10m_pertag.ivf
 # The strategy grid swept on both query sets (public for calibration, private for scoring).
+GRID_Q10K="S0;S1:safety=2,ef=100;S2:ef=16|32|64|128|256;S3:ef=32|128|512,threshold=60;S4:c=4096,nprobe=16|64|256|512;S4:c=16384,nprobe=64|256|1024;S6:ef=2000|8000|32000"
+Q10K=$D/yfcc_q10k
 GRID10="S0;S2:ef=16|32|64|128|256;S3:ef=16|32|64|128|256,threshold=60;S2:ef=64,filter=terms;S4:c=4096,nprobe=16|32|64|128|256|512;S4:c=16384,nprobe=64|128|256|512|1024;S6:ef=2000|4000|8000|16000|32000|64000"
 GRID10_SLOW="S4L:c=4096,nprobe=64|256;S1:safety=1|2|4,ef=100"
 GRID1="S0;S2:ef=16|32|64|128|256;S3:ef=16|32|64|128|256,threshold=60;S4:c=1024,nprobe=4|8|16|32|64|128;S4L:c=1024,nprobe=32"
@@ -26,6 +28,11 @@ case "${1:-}" in
              FI_HEAP=6g $FI build-pertag --data $Y --name yfcc-10M --out $PT --results results/m2_build.jsonl
              $FI build-ivf --data $Y1 --name yfcc-1M-slice --clusters 1024 --out $D/ivf/yfcc1m_c1024.ivf --results results/m2_build.jsonl
              $FI build-index --data $Y1 --name yfcc-1M-slice --index $D/idx/yfcc1m --ivf $D/ivf/yfcc1m_c1024.ivf --ranges --results results/m2_build.jsonl ;;
+  subset)    $FI subset --data $Y --out $Q10K --per-bin 2000 ;;
+  exp1-q10k-public)   # calibration data for the planner (ran while the FAISS index built in WSL; see notes in the results)
+             FI_HEAP=5g $FI sweep --data $Q10K --name yfcc-10M-q10k --queries public --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --strategies "$GRID_Q10K" --threads 4 --warmup 500 --global-warmup 2000 --run q10k --out results/exp1_10m_public.jsonl --experiment exp1_calibration --note "${NOTE:-}" ;;
+  exp1-q10k-private)
+             FI_HEAP=5g $FI sweep --data $Q10K --name yfcc-10M-q10k --queries private --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --strategies "$GRID_Q10K" --threads ${THREADS:-4} --warmup 500 --global-warmup 2000 --run q10k --out results/exp1_10m.jsonl --experiment exp1 --note "${NOTE:-}" ;;
   exp1-10m)  # Private: all 100k queries. Public (calibration only): a 30k-query subset. Slow strategies on 20k.
              FI_HEAP=5g $FI sweep --data $Y --name yfcc-10M --queries private --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --strategies "$GRID10" --threads 4 --warmup 1000 --run exp1_10m --out results/exp1_10m.jsonl --experiment exp1
              FI_HEAP=5g $FI sweep --data $Y --name yfcc-10M --queries public --limit 30000 --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --strategies "$GRID10" --threads 4 --warmup 1000 --run exp1_10m --out results/exp1_10m_public.jsonl --experiment exp1_calibration

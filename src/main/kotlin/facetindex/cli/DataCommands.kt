@@ -219,3 +219,47 @@ class QuerySetView(private val qs: QuerySet, private val picks: IntArray) {
         return QuerySet(qs.name, facetindex.data.U8Matrix(picks.size, d, seg), tags, null)
     }
 }
+
+/**
+ * A stratified query subset in benchmark file format: [perBin] queries drawn (seeded) from each
+ * selectivity bin, written with the original file names into a new directory whose base files are
+ * hard links to the full dataset's, so every tool (FacetIndex and the FAISS harness) reads the same
+ * queries and the same published ground truth rows.
+ */
+object Subset {
+    fun run(a: Args): Int {
+        val src = FilteredDataset(a.path("data"), "yfcc-10M")
+        val out = a.path("out")
+        val perBin = a.int("per-bin", 2000)
+        Files.createDirectories(out)
+        for (f in listOf("base.10M.u8bin", "base.metadata.10M.spmat")) {
+            val t = out.resolve(f)
+            if (!Files.exists(t)) Files.createLink(t, src.dir.resolve(f))
+        }
+        val store = loadStore(src)
+        val n = src.base.size.toDouble()
+        val manifest = ArrayList<String>()
+        for (which in listOf("public", "private")) {
+            val qs = src.queries(which)
+            val byBin = (0 until qs.n).groupBy { Bins.of(store.matchCount(qs.tagsOf(it)) / n) }
+            val rnd = SplittableRandom(a.long("seed", 20261004L))
+            val picks = byBin.toSortedMap().flatMap { (_, list) ->
+                val l = list.toMutableList()
+                for (i in l.indices.reversed()) { val j = rnd.nextInt(i + 1); val t = l[i]; l[i] = l[j]; l[j] = t }
+                l.take(perBin)
+            }.sorted().toIntArray()
+            val (q, m, g) = if (which == "public") Triple("query.public.100K.u8bin", "query.metadata.public.100K.spmat", "GT.public.ibin")
+            else Triple("query.private.${FilteredDataset.PRIVATE_KEY}.100K.u8bin", "query.metadata.private.${FilteredDataset.PRIVATE_KEY}.100K.spmat", "GT.private.${FilteredDataset.PRIVATE_KEY}.ibin")
+            Formats.writeU8bin(out.resolve(q), picks.size, qs.vectors.d) { qs.vectors.row(picks[it]) }
+            Formats.writeSpmat(out.resolve(m), qs.tags.selectRows(picks))
+            val gt = qs.gt!!
+            Formats.writeIbin(out.resolve(g), GroundTruth(picks.size, gt.k, IntArray(picks.size * gt.k) { gt.ids[picks[it / gt.k] * gt.k + it % gt.k] },
+                FloatArray(picks.size * gt.k) { gt.dists[picks[it / gt.k] * gt.k + it % gt.k] }))
+            manifest += "$which: ${picks.size} queries, $perBin per bin ${Bins.labels}, bin sizes ${byBin.toSortedMap().mapValues { it.value.size }}, seed ${a.long("seed", 20261004L)}"
+            Files.write(out.resolve("picks_$which.txt"), picks.map { it.toString() })
+        }
+        Files.write(out.resolve("SUBSET.txt"), manifest)
+        manifest.forEach { println(it) }
+        return 0
+    }
+}
