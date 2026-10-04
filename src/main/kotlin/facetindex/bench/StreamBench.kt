@@ -65,9 +65,17 @@ class YfccWorkload(
         while (true) { val r = rnd.nextInt(base); if (!deleted.get(r)) return r }
     }
 
+    /** Wall time of the last [run], seconds. */
+    var ranS = 0.0
+        private set
+
     /** Produces events into [sink] for [seconds] (or until stopped). */
     fun run(sink: EventSink, seconds: Double) {
         val start = System.nanoTime()
+        try { runInner(sink, seconds, start) } finally { ranS = (System.nanoTime() - start) / 1e9 }
+    }
+
+    private fun runInner(sink: EventSink, seconds: Double, start: Long) {
         val end = start + (seconds * 1e9).toLong()
         val rates = doubleArrayOf(insertRate, deleteRate, attrRate)
         val count = LongArray(3)
@@ -134,6 +142,8 @@ object StreamBench {
             val tc = System.nanoTime()
             deleteRecursively(work); Files.createDirectories(work); copyRecursively(baseIndex, work)
             val copyS = (System.nanoTime() - tc) / 1e9
+            // A fresh copy is cold in the page cache; read it once so queries are not charged for that (BUG_LOG #7).
+            if (a.flag("prefault", true)) Sweep.prefault(listOf(work))
             val ivfs = ivfFiles.map { f -> IvfIndex.load(Path.of(f)).let { full ->
                 val asg = full.assignmentCopy(); for (r in base until asg.size) asg[r] = -1
                 IvfIndex(full.k, full.d, full.centroids, asg)
@@ -206,6 +216,9 @@ object StreamBench {
                 }
                 Thread.sleep(200)
             }
+            // Measured the moment the generator stops, before draining.
+            val attrsAtGenEnd = applier.byType.getValue("set_attrs").get()
+            val appliedAtGenEnd = applier.applied.get() + applier.skipped.get()
             loadThread.join()
             val genEnd = (System.nanoTime() - t0) / 1e9
             val backlogGen = wl.seq - (applier.applied.get() + applier.skipped.get())
@@ -222,7 +235,9 @@ object StreamBench {
                 "mode" to mode.name, "set_attrs_rate" to rate, "insert_rate" to insertRate, "delete_rate" to (if (insertRate > 0) a.double("delete-rate", 100.0) else 0.0),
                 "via" to via, "duration_s" to duration, "query_qps" to q, "refresh_ms" to a.long("refresh-ms", 1000),
                 "produced" to wl.produced.mapValues { it.value.get() }, "applied" to applier.counters(),
-                "achieved_apply_rate" to applier.applied.get() / elapsed, "achieved_set_attrs_rate" to applier.byType.getValue("set_attrs").get() / genEnd,
+                "achieved_apply_rate" to applier.applied.get() / elapsed, "generator_s" to wl.ranS,
+                "achieved_set_attrs_rate" to attrsAtGenEnd / maxOf(wl.ranS, 1e-9), "backlog_when_generator_stopped" to (wl.seq - appliedAtGenEnd),
+                "rate_note" to "SetAttrs applied by the time the generator stopped, over the generator's run time",
                 "backlog_at_generator_end" to backlogGen, "drain_s" to drainS, "backlog_after_drain" to backlogAtEnd,
                 "apply_lag_us" to applier.applyLagMicros.summary(), "attr_apply_lag_us" to applier.attrApplyLagMicros.summary(),
                 "lucene_visibility_lag_us" to idx.lag.histogramMicros.summary(),

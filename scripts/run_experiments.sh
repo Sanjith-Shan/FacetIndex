@@ -42,7 +42,9 @@ case "${1:-}" in
              done ;;
   exp5-q)    # A3 at three SetAttrs rates, then A1 and A2 at 1,000/s, 150 s windows, through Kafka
              FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4                --modes A3 --rates 100,1000,10000 --duration 150 --checkpoint 50 --via kafka --out results/exp5.jsonl
-             FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4                --modes A2,A1 --rates 1000 --duration 150 --checkpoint 50 --via kafka --out results/exp5.jsonl ;;
+             for m in A2 A1; do  # one process per run (BUG_LOG #9)
+               FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4                  --modes $m --rates 1000 --duration 150 --checkpoint 50 --via kafka --out results/exp5.jsonl || true
+             done ;;
   exp9-q)    FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4                --modes A3 --rates 10000 --duration 150 --checkpoint 50 --via direct --experiment exp9 --out results/exp5.jsonl ;;
   exp6-q)    FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4,$IVF16                --modes A3 --rates 1000 --qps 20,50,100 --query-strategies S2,S4,P --planner-model results/m3_cost_model.json                --planner-knob ${KNOB:?set KNOB from exp3} --duration 300 --checkpoint 100 --via kafka --experiment exp6 --out results/exp6.jsonl ;;
   exp1-10m)  # Private: all 100k queries. Public (calibration only): a 30k-query subset. Slow strategies on 20k.
