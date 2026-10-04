@@ -33,6 +33,16 @@ case "${1:-}" in
              FI_HEAP=5g $FI sweep --data $Q10K --name yfcc-10M-q10k --queries public --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --strategies "$GRID_Q10K" --threads 4 --warmup 500 --global-warmup 2000 --run q10k --out results/exp1_10m_public.jsonl --experiment exp1_calibration --note "${NOTE:-}" ;;
   exp1-q10k-private)
              FI_HEAP=5g $FI sweep --data $Q10K --name yfcc-10M-q10k --queries private --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --strategies "$GRID_Q10K" --threads ${THREADS:-4} --warmup 500 --global-warmup 2000 --run q10k --out results/exp1_10m.jsonl --experiment exp1 --note "${NOTE:-}" ;;
+  exp3-q10k) FI_HEAP=5g $FI exp3 --data $Q10K --name yfcc-10M-q10k --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --calib-dir $D/perquery/q10k --eval-dir $D/perquery/q10k --threads ${THREADS:-4} --out results/m3_exp3.jsonl --run exp3_q10k ;;
+  faiss-q10k) # The benchmark's FAISS baseline on the same 10k samples, 2 threads (WSL cap)
+             for qs in private public; do
+               wsl.exe -d Ubuntu-24.04 -- bash -c "bash /mnt/c/Mac/Documents/FacetIndex/scripts/faiss_wsl.sh --data-dir /mnt/c/SullaPortal/data/facetindex/yfcc_q10k --queries $qs --threads 2 --repeats 1 --out /mnt/c/Mac/Documents/FacetIndex/results/m1_faiss.jsonl"
+             done ;;
+  exp5-q)    # A3 at three SetAttrs rates, then A1 and A2 at 1,000/s, 150 s windows, through Kafka
+             FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4                --modes A3 --rates 100,1000,10000 --duration 150 --checkpoint 50 --via kafka --out results/exp5.jsonl
+             FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4                --modes A2,A1 --rates 1000 --duration 150 --checkpoint 50 --via kafka --out results/exp5.jsonl ;;
+  exp9-q)    FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4                --modes A3 --rates 10000 --duration 150 --checkpoint 50 --via direct --experiment exp9 --out results/exp5.jsonl ;;
+  exp6-q)    FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4,$IVF16                --modes A3 --rates 1000 --qps 20,50,100 --query-strategies S2,S4,P --planner-model results/m3_cost_model.json                --planner-knob ${KNOB:?set KNOB from exp3} --duration 300 --checkpoint 100 --via kafka --experiment exp6 --out results/exp6.jsonl ;;
   exp1-10m)  # Private: all 100k queries. Public (calibration only): a 30k-query subset. Slow strategies on 20k.
              FI_HEAP=5g $FI sweep --data $Y --name yfcc-10M --queries private --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --strategies "$GRID10" --threads 4 --warmup 1000 --run exp1_10m --out results/exp1_10m.jsonl --experiment exp1
              FI_HEAP=5g $FI sweep --data $Y --name yfcc-10M --queries public --limit 30000 --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --strategies "$GRID10" --threads 4 --warmup 1000 --run exp1_10m --out results/exp1_10m_public.jsonl --experiment exp1_calibration
@@ -61,5 +71,5 @@ case "${1:-}" in
                --duration 120 --via kafka --experiment exp6 --out results/exp6.jsonl ;;
   exp7)      $FI exp7 --data $Y1 --name yfcc-1M-slice --index $D/idx/yfcc1m --ivf $D/ivf/yfcc1m_c1024.ivf \
                --strategies "S0;S2:ef=64;S2:ef=64,filter=terms;S3:ef=64,threshold=60;S4:c=1024,nprobe=32|128" --out results/exp7.jsonl ;;
-  *) echo "phases: data m0 build exp1-10m exp1-1m exp3-10m exp3-1m faiss exp4 exp5 exp9 exp6 exp7"; exit 2 ;;
+  *) echo "phases: subset exp1-q10k-private exp1-q10k-public exp3-q10k faiss-q10k exp5-q exp9-q exp6-q data m0 build exp1-10m exp1-1m exp3-10m exp3-1m faiss exp4 exp5 exp9 exp6 exp7"; exit 2 ;;
 esac
