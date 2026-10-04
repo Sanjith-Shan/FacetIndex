@@ -178,6 +178,16 @@ object StreamBench {
             } else { sink = DirectSink(applier); consumer = null }
             val insertRate = if (rate > 0 || a.flag("churn-at-zero", true)) a.double("insert-rate", 100.0) else 0.0
             val wl = YfccWorkload(ds, csr, base, insertRate, a.double("delete-rate", 100.0).takeIf { insertRate > 0 } ?: 0.0, rate, a.long("seed", 5L) + rep)
+            // Warm-up before the measured window: wait for the consumer's group join, then run queries
+            // for a while so JIT and caches are warm (the first run in a process was a cold start).
+            val readyBy = System.nanoTime() + 120_000_000_000L
+            while (consumer != null && !consumer.ready && System.nanoTime() < readyBy) Thread.sleep(100)
+            val warmUntil = System.nanoTime() + (a.double("warmup", 20.0) * 1e9).toLong()
+            var wi = 0
+            while (System.nanoTime() < warmUntil) {
+                val qi = (wi++ * 7907) % priv.n
+                for ((_, sb) in strategies) sb.first.search(priv.vector(qi), Predicate(priv.tagsOf(qi)), 10, sb.second)
+            }
             idx.merges.reset(); idx.lag.reset()
             val bytes0 = idx.bytesOnDisk
             val t0 = System.nanoTime()

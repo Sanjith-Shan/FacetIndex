@@ -106,6 +106,10 @@ class KafkaCatalogConsumer(
 
     @Volatile
     var running = true
+
+    /** True once the consumer has been assigned partitions (the group join is done). */
+    @Volatile
+    var ready = false
     val consumed = AtomicLong()
     var error: Throwable? = null
         private set
@@ -122,6 +126,7 @@ class KafkaCatalogConsumer(
             var sinceStart = 0L
             while (running) {
                 val records = consumer.poll(Duration.ofMillis(100))
+                if (!ready && consumer.assignment().isNotEmpty()) ready = true
                 if (records.isEmpty) continue
                 val events = ArrayList<CatalogEvent>(records.count())
                 for (r in records) events += CatalogEvent.parseFrom(r.value())

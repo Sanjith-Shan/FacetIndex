@@ -117,3 +117,25 @@ Two workloads: the official runbook (`msturing-10M-clustered`, `delete_runbook.y
 a fresh HNSW index and scored the track's way, and a constructed filtered workload on YFCC
 (start from 9M items, stream the rest as inserts, delete at the same rate, flip tags with SetAttrs
 at 0 / 100 / 1,000 / 10,000 per second), labelled as constructed wherever it appears.
+
+## 7. Decisions forced by the box, and what was cut
+
+- **One copy of the vectors.** On a 14.9 GB box whose shared WSL VM holds 4 to 6 GB, keeping the raw
+  `.u8bin` (for S0, S4, S6) and Lucene's `.vec` (for S2, S3) hot at once thrashed the page cache. The
+  exact strategies now read the vectors from Lucene's own `.vec` file in the force-merged index (the
+  last n x d bytes before the codec footer, verified row by row against the base file at load) with
+  a sign-extending int8 kernel, since Lucene stores the uint8 values shifted by 128.
+- **S6 searches by candidate count.** Frequent tags have from 10 to 3,386 cells, so a fixed nprobe
+  covers wildly different fractions of a tag. S6 visits a tag's cells nearest first until a target
+  number of predicate-passing candidates has been scored, and hands predicates with at most 20,000
+  exact matches to S0.
+- **FAISS in bounded memory.** The benchmark's `fit` needs about 12 GB; WSL here has 6 GB. The
+  baseline index was built in chunks with the same factory string and ids, trained on a
+  1,048,576-vector sample (FAISS's default would be 4,194,304) to fit the night; its search code is
+  unchanged. FacetIndex is compared with it at 2 threads (and pinned to 2 cores) because WSL has 2.
+- **Stratified query samples.** 10,000 private and 10,000 public queries, 2,000 per selectivity bin,
+  written as benchmark-format files so FAISS and FacetIndex read the same queries.
+- **Cut for time:** range-filter measurements (M5; the code is in), the official msturing streaming
+  runbook (exp4; the code and data are in), the 30M runbook and ACORN-γ experiments (M6), the 1M
+  slice curves, the tombstone-drift run, the Azure rerun (exp8; `scripts/azure_d8lds_v5.md`), and an
+  upstream Lucene note.
