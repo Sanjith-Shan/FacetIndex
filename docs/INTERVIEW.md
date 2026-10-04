@@ -118,3 +118,18 @@ All on yfcc-10M, the 10k stratified private sample, mini PC, 4 threads unless st
 - **Build costs.** 10M HNSW (M 16, beam 100): 85 min to add 9M documents and 3 h to force-merge them
   under memory pressure, then 3 min and 39 min for the last 1M (`results/m2_build.jsonl`). k-means
   with 16,384 cells: 57 min training on a 1M sample and 37 min assigning 10M.
+- **Attribute updates three ways** (constructed workload: 9M-item start, 100 inserts/s and 100
+  deletes/s, SetAttrs at the stated rate, 150 s through Kafka; `results/exp5.jsonl`):
+  - A3 external store kept up at 100, 1,000 and 10,000 SetAttrs/s (9,999.7/s applied at 10,000, no
+    backlog). Produce-to-applied, which for A3 is produce-to-visible, had a median of 16 to 17 ms;
+    its p99 was 2.6 s at 10,000/s but 20 s at 100/s, so the tail is not rate-driven: the one consumer
+    thread also applies the inserts and deletes to Lucene and stalls behind its writes.
+  - A1 terms kept up at 1,000/s but merged 23.8 s per minute (A3: 1.8 to 6.5), because every update
+    re-adds the document and re-inserts its vector into the graph.
+  - A2 doc values at 1,000/s pushed Lucene's write-to-visible p99 to 235 s and grew the index from
+    2.97 to 3.37 GB in 150 s: each refresh writes a new generation of the doc-value field for the
+    whole 9M-document segment, and its filter scans every document. The box was saturated in that run.
+  - Filtered recall at the checkpoints stayed flat during the updates: S2 0.991 to 0.993, S4 (nprobe
+    32) 0.77 to 0.79, against exact answers over the live set.
+- **What Kafka costs (exp9).** The same A3 run at 10,000/s through the in-process twin: query p99
+  0.25 s (S2) against 1.33 s through Kafka; the broker and consumer took CPU from the queries.
