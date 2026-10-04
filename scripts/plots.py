@@ -135,24 +135,24 @@ def exp2():
 
 
 def exp5():
-    data = [r for r in rows("exp5.jsonl") if r["experiment"] == "exp5"]
+    data = [r for r in rows("exp5.jsonl") if r["via"] == "kafka"]
     if not data:
         return
+    order = sorted(data, key=lambda r: (r["mode"] != "A3", r["mode"], r["set_attrs_rate"]))
+    labels = [f"{r['mode']} {int(r['set_attrs_rate']):,}/s" for r in order]
+    # For A3 a change is visible once applied; for A1/A2 once a refresh exposes the Lucene write.
+    p50 = [(r["attr_apply_lag_us"]["p50"] if r["mode"] == "A3" else max(r["attr_apply_lag_us"]["p50"], r["lucene_visibility_lag_us"]["p50"])) / 1000 for r in order]
+    p99 = [(r["attr_apply_lag_us"]["p99"] if r["mode"] == "A3" else max(r["attr_apply_lag_us"]["p99"], r["lucene_visibility_lag_us"]["p99"])) / 1000 for r in order]
     fig, ax = plt.subplots(figsize=(7.5, 4.2), dpi=130)
-    labels, offered, applied = [], [], []
-    for r in data:
-        labels.append(f"{r['mode']} {int(r['set_attrs_rate']):,}/s")
-        offered.append(r["set_attrs_rate"])
-        applied.append(r["achieved_set_attrs_rate"])
     xs = range(len(labels))
-    ax.bar([x - 0.2 for x in xs], offered, width=0.38, color="#b8b7b0", label="offered")
-    ax.bar([x + 0.2 for x in xs], applied, width=0.38, color="#2a78d6", label="applied")
+    ax.bar([x - 0.2 for x in xs], p50, width=0.38, color="#2a78d6", label="p50")
+    ax.bar([x + 0.2 for x in xs], p99, width=0.38, color="#eb6834", label="p99")
     ax.set_xticks(list(xs))
     ax.set_xticklabels(labels)
     ax.set_yscale("log")
-    style(ax, "SetAttrs applied per second through Kafka (constructed workload)", "attribute path and offered rate", "events/s (log)")
+    style(ax, "Attribute change to visible in search, through Kafka (constructed workload)", "attribute path and SetAttrs rate", "milliseconds (log)")
     ax.legend(frameon=False, fontsize=9)
-    fig.text(0.01, 0.01, f"{MACHINE}; 9M-item start, 100 inserts/s and 100 deletes/s alongside; results/exp5.jsonl", fontsize=7.5, color=TEXT2)
+    fig.text(0.01, 0.01, f"{MACHINE}; every run applied all offered updates; results/exp5.jsonl", fontsize=7.5, color=TEXT2)
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(os.path.join(IMG, "exp5_updates.png"))
     plt.close(fig)

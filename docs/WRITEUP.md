@@ -116,14 +116,15 @@ On a constructed workload (start from 9M items, stream the rest in at 100 insert
 and flip tags at the stated rate; not a competition track), measured over 150 s windows
 (`results/exp5.jsonl`):
 
-![Attribute updates](img/exp5_updates.png)
+![Attribute change to visible](img/exp5_updates.png)
 
 - A3 kept up at 10,000 SetAttrs/s through Kafka (9,999.7/s applied, no backlog), and an attribute
   change reached the next query in 16.7 ms at the median. The tail is long (p99 2.6 s at 10,000/s,
   20 s at 100/s); it does not grow with the rate, which points at the single consumer thread
   stalling behind the Lucene writes for inserts and deletes it also applies.
-- A1 also kept up at 1,000/s, but merged for 23.8 s of every minute against 2 to 7 s for A3: every
-  tag change rebuilt a document and re-inserted its vector.
+- A1 also kept up at 1,000/s, but a change became visible only at the next NRT refresh (0.76 s at the
+  median with a 1 s refresh, against A3's 16 ms), and it merged for 23.8 s of every minute against
+  2 to 7 s for A3: every tag change rebuilt a document and re-inserted its vector.
 - A2 broke down at 1,000/s: Lucene's write-to-visible p99 reached 235 s and the index grew from 2.97
   to 3.37 GB in 150 s, because every refresh writes a new generation of the doc-value field for the
   whole 9M-document segment, and the doc-value filter has to scan every document.
