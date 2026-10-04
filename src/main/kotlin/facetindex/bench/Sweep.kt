@@ -118,22 +118,39 @@ fun runBatch(e: Engine, qs: QuerySet, picks: IntArray, threads: Int, k: Int, sea
 
 object Sweep {
     /** Loads what a sweep needs: store, attribute store, IVFs, a static searcher. */
+    /**
+     * Reads files once, sequentially, so the page cache holds them before timing starts (random first
+     * touches through mmap were far slower than a sequential read on this box).
+     */
+    fun prefault(paths: List<Path>) {
+        val buf = ByteArray(1 shl 22)
+        for (p in paths) {
+            if (Files.isDirectory(p)) Files.list(p).use { s -> s.toList() }.forEach { f -> Files.newInputStream(f).use { while (it.read(buf) > 0) {} } }
+            else if (Files.exists(p)) Files.newInputStream(p).use { while (it.read(buf) > 0) {} }
+        }
+    }
+
     fun engine(a: Args, ds: FilteredDataset): Pair<Engine, StaticSearcher?> {
+        if (a.flag("prefault", true)) prefault(listOfNotNull(a.pathOrNull("index"), a.pathOrNull("s5-index")))
         val attrs: AttributeStore = loadStore(ds)
         val searcher = a.pathOrNull("index")?.let { StaticSearcher(it) }
         val ivfs = a.list("ivf", "").associate { f -> IvfIndex.load(Path.of(f)).let { it.k to it } }
         val mode = FilterMode.valueOf(a.str("filter", "external").uppercase())
-        val e = Engine(ds.base, attrs, searcher, ivfs, mode)
+        // By default exact strategies read vectors from the Lucene index's own .vec file, so the box
+        // keeps one copy of the vectors in its page cache instead of two (BUG_LOG #7).
+        val store = if (searcher != null && a.str("vectors", "lucene") == "lucene")
+            facetindex.data.U8Store.fromLuceneIndex(a.path("index"), ds.base.size, ds.base.dim, verifyAgainst = ds.base) else ds.base
+        val e = Engine(store, attrs, searcher, ivfs, mode)
         a.pathOrNull("pertag")?.let { f ->
             val pt = facetindex.ivf.PerTagIvf.load(f)
-            val s6 = facetindex.ivf.PerTagIvfStrategy(ds.base, null, attrs, pt, PreFilterBruteForce(e))
+            val s6 = facetindex.ivf.PerTagIvfStrategy(store, null, attrs, pt, PreFilterBruteForce(e))
             e.extraStrategies["S6"] = { _ -> s6 }
         }
         a.pathOrNull("s5-index")?.let { f ->
             // S5: the same predicate-subgraph searcher over a denser graph (M x gamma neighbours),
             // built by Lucene's own graph builder; threshold 100 forces the filtered searcher.
             val s5Searcher = StaticSearcher(f)
-            val e5 = Engine(ds.base, attrs, s5Searcher, ivfs, mode)
+            val e5 = Engine(store, attrs, s5Searcher, ivfs, mode)
             e.extraStrategies["S5"] = { params -> LuceneFilteredHnsw(e5, "S5", params["threshold"]?.toInt() ?: 100) }
         }
         return e to searcher
@@ -156,16 +173,31 @@ object Sweep {
         val ds = FilteredDataset(a.path("data"), a.str("name", "yfcc-10M"))
         val which = a.str("queries", "private")
         val qs = ds.queries(which)
+        val tStart = System.nanoTime()
+        fun phase(msg: String) = println("[%.1fs] %s".format((System.nanoTime() - tStart) / 1e9, msg))
         val (e, searcher) = engine(a, ds)
+        phase("engine loaded")
         val specs = StrategySpec.expand(a.req("strategies"))
         val threads = a.int("threads", 4)
         val k = a.int("k", 10)
         val picks = picks(a, qs)
         val stats = picks.associateWith { q -> e.stats(Predicate(qs.tagsOf(q))) }
+        phase("stats for ${picks.size} queries")
         val perQueryDir = a.path("per-query-dir", DataDir.resolve("perquery/${a.str("run", "sweep")}"))
         Files.createDirectories(perQueryDir)
         val out = JsonlWriter(a.path("out"))
         val warm = picks.take(a.int("warmup", 2000)).toIntArray()
+        // Global warm-up: page in the Lucene index and the vector file before any timed configuration,
+        // so the first configurations are not charged for a cold page cache.
+        val globalWarm = picks.take(a.int("global-warmup", 5000)).toIntArray()
+        if (globalWarm.isNotEmpty()) {
+            val warmSpecs = listOfNotNull(if (e.searchers != null) "S2:ef=64" else null, "S0", e.ivfs.keys.maxOrNull()?.let { "S4:c=$it,nprobe=64" })
+            for (ws in warmSpecs) {
+                val sp = StrategySpec.parse(ws); val st = strategyFor(e, sp); val b = sp.budget()
+                runBatch(e, qs, globalWarm, threads, k) { q -> st.search(qs.vector(q), Predicate(qs.tagsOf(q)), k, b).let { it.rows to (0L to "") } }
+                phase("global warm-up $ws")
+            }
+        }
         for (spec in specs) {
             val strat = strategyFor(e, spec)
             val budget = spec.budget()

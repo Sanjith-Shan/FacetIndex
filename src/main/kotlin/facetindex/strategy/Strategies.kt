@@ -132,7 +132,7 @@ class PreFilterBruteForce(private val e: Engine) : FilterStrategy {
         val top = TopK(k)
         var scored = 0L
         val u8 = e.store as? U8Store
-        val qb = (q as? QueryVector.U8)?.v
+        val qb = (q as? QueryVector.U8)?.v?.let { v -> u8?.prepare(v) }
         fun score(r: Int) {
             val d = if (u8 != null && qb != null) u8.distInt(qb, r).toFloat() else e.store.dist(q, r)
             top.offer(d, r); scored++
@@ -197,7 +197,7 @@ class IvfIntersect(private val e: Engine, private val clusters: Int) : FilterStr
         val top = TopK(k)
         var scored = 0L
         val u8 = e.store as? U8Store
-        val qb = (q as? QueryVector.U8)?.v
+        val qb = (q as? QueryVector.U8)?.v?.let { v -> u8?.prepare(v) }
         val rs = if (p.ranges.isEmpty()) null else e.ranges!!
         fun score(r: Int) {
             if (rs != null && !rs.pass(r, p.ranges)) return

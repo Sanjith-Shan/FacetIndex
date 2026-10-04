@@ -13,6 +13,7 @@ object Registry {
         "exp4" to ("official streaming runbook replay, scored the track's way" to facetindex.bench.RunbookBench::run),
         "exp5" to ("constructed filtered streaming workload: A1/A2/A3 x SetAttrs rates" to facetindex.bench.StreamBench::run),
         "exp7" to ("range and tag-plus-range predicates on constructed attributes" to facetindex.bench.RangeBench::run),
+        "tombstones" to ("HNSW recall and latency as the deleted fraction grows, before and after merging" to facetindex.bench.TombstoneBench::run),
         "exp3" to ("planner vs best fixed, FAISS rule and oracle" to facetindex.bench.PlannerBench::run),
     )
 }

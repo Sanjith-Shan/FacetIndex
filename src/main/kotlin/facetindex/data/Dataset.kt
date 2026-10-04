@@ -37,25 +37,58 @@ interface VectorStore {
     fun luceneFloats(row: Int): FloatArray = throw UnsupportedOperationException()
 }
 
-class U8Store(val m: U8Matrix) : VectorStore {
+/**
+ * uint8 vectors in a mapped file. With [shifted] the file holds Lucene's int8 form (x xor 0x80), as
+ * in Lucene's own `.vec` file, and distances use the sign-extending kernel against a shifted query.
+ * Callers on the hot path call [prepare] once per query and then [distInt].
+ */
+class U8Store(val m: U8Matrix, val shifted: Boolean = false) : VectorStore {
     override val dim get() = m.d
     override val size get() = m.n
     override val isByte get() = true
     private val seg: MemorySegment = m.seg
 
-    override fun dist(q: QueryVector, row: Int): Float = L2.u8((q as QueryVector.U8).v, seg, row.toLong() * m.d, m.d).toFloat()
+    /** The query in this store's encoding. */
+    fun prepare(q: ByteArray): ByteArray = if (shifted) toLuceneBytes(q.copyOf()) else q
 
-    fun distInt(q: ByteArray, row: Int): Int = L2.u8(q, seg, row.toLong() * m.d, m.d)
+    /** Squared L2 for a query already passed through [prepare]. */
+    fun distInt(prepared: ByteArray, row: Int): Int =
+        if (shifted) L2.i8(prepared, seg, row.toLong() * m.d, m.d) else L2.u8(prepared, seg, row.toLong() * m.d, m.d)
 
-    override fun query(row: Int) = QueryVector.U8(m.row(row))
+    override fun dist(q: QueryVector, row: Int): Float = distInt(prepare((q as QueryVector.U8).v), row).toFloat()
 
-    override fun luceneBytes(row: Int): ByteArray = m.row(row).also { toLuceneBytes(it) }
+    override fun query(row: Int) = QueryVector.U8(if (shifted) toLuceneBytes(m.row(row)) else m.row(row))
+
+    override fun luceneBytes(row: Int): ByteArray = if (shifted) m.row(row) else m.row(row).also { toLuceneBytes(it) }
 
     companion object {
-        /** In place: uint8 to Lucene's signed int8 by flipping the top bit (x - 128). */
+        /** In place: uint8 to Lucene's signed int8 by flipping the top bit (x - 128); its own inverse. */
         fun toLuceneBytes(v: ByteArray): ByteArray {
             for (i in v.indices) v[i] = (v[i].toInt() xor 0x80).toByte()
             return v
+        }
+
+        /**
+         * Maps the vector data inside a force-merged Lucene index's `.vec` file (one segment, every
+         * document with a vector, docid == row), so exact strategies and Lucene share one copy of the
+         * vectors in the page cache. The data is the last n x d bytes before the 16-byte codec footer;
+         * [verifyAgainst] checks a sample of rows against the original file.
+         */
+        fun fromLuceneIndex(index: java.nio.file.Path, n: Int, d: Int, verifyAgainst: U8Store?): U8Store {
+            val vec = Files.list(index).use { s -> s.filter { it.fileName.toString().endsWith(".vec") }.toList() }
+            require(vec.size == 1) { "expected one .vec file in $index (force-merged), found ${vec.size}" }
+            val whole = Formats.map(vec[0])
+            val off = whole.byteSize() - 16 - n.toLong() * d
+            require(off > 0) { "${vec[0]} is too small for $n x $d" }
+            val store = U8Store(U8Matrix(n, d, whole.asSlice(off, n.toLong() * d)), shifted = true)
+            if (verifyAgainst != null) {
+                val rnd = java.util.SplittableRandom(1)
+                repeat(1000) {
+                    val r = rnd.nextInt(n)
+                    check(store.query(r).let { (it as QueryVector.U8).v.contentEquals(verifyAgainst.m.row(r)) }) { "row $r of ${vec[0]} differs from the base file" }
+                }
+            }
+            return store
         }
     }
 }

@@ -41,6 +41,21 @@ class KernelAndStoreTest {
     }
 
     @Test
+    fun `signed kernel on shifted vectors equals the unsigned kernel on the originals`(): Unit = runBlocking {
+        checkAll(300, Arb.int(1..300)) { d ->
+            val r = Random(d + 1000)
+            val a = ByteArray(d) { r.nextInt(256).toByte() }
+            val b = ByteArray(d) { r.nextInt(256).toByte() }
+            val sb = b.copyOf().also { facetindex.data.U8Store.toLuceneBytes(it) }
+            val sa = a.copyOf().also { facetindex.data.U8Store.toLuceneBytes(it) }
+            val seg = Arena.global().allocate(d.toLong())
+            MemorySegment.copy(sb, 0, seg, ValueLayout.JAVA_BYTE, 0, d)
+            assertEquals(L2.u8(a, b), L2.i8(sa, seg, 0, d))
+        }
+        Unit
+    }
+
+    @Test
     fun `extreme uint8 values do not overflow`(): Unit = runBlocking {
         checkAll(200, Arb.byteArray(Arb.constant(192), Arb.byte())) { a ->
             val b = ByteArray(192) { (a[it].toInt() xor 0xFF).toByte() }

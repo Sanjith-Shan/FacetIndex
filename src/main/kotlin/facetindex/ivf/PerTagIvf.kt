@@ -99,9 +99,11 @@ class PerTagIvf(val minCount: Int, val perCell: Int, private val tags: Map<Int, 
 }
 
 /**
- * S6: per-tag sub-index search. The query's rarest indexed tag supplies the cells; any other tags are
- * checked against their bitmaps; survivors are scored exactly. A query with no indexed tag falls back
- * to [fallback] (S0 by default, since an unindexed tag is rare by construction).
+ * S6: per-tag sub-index search. The query's rarest indexed tag supplies the cells, visited nearest
+ * first until at least `ef` candidates passing the whole predicate have been scored (ParlayANN also
+ * sizes its search by a candidate count rather than a fixed number of cells, since tags range from 10
+ * to thousands of cells here). Predicates matching at most `fallbackBelow` items (exact count), or
+ * with no indexed tag, go to [fallback] (S0): scanning them is cheaper than any index.
  */
 class PerTagIvfStrategy(
     private val store: VectorStore,
@@ -109,33 +111,43 @@ class PerTagIvfStrategy(
     private val attrs: AttributeStore,
     private val index: PerTagIvf,
     private val fallback: FilterStrategy,
+    private val fallbackBelow: Int = 20_000,
 ) : FilterStrategy {
     override val name = "S6"
 
     override fun search(q: QueryVector, p: Predicate, k: Int, budget: SearchBudget): SearchResult {
         val lead = p.tags.filter { it in index.indexedTags }.minByOrNull { attrs.cardinality(it) }
-            ?: return fallback.search(q, p, k, budget)
+        if (lead == null || attrs.matchCount(p.tags) <= fallbackBelow) return fallback.search(q, p, k, budget)
         val ti = index.of(lead)!!
         val qf = when (q) { is QueryVector.U8 -> FloatArray(q.dim) { (q.v[it].toInt() and 0xFF).toFloat() }; is QueryVector.F32 -> q.v }
-        val cells = ti.probe(qf, maxOf(1, budget.nprobe))
+        val dist = FloatArray(ti.k) { L2.f32(qf, ti.centroids, it * ti.d, ti.d) }
+        val order = (0 until ti.k).sortedBy { dist[it] }
+        val target = maxOf(k, if (budget.ef > 0) budget.ef else 5000)
+        val maxCells = if (budget.nprobe > 0) budget.nprobe else ti.k
         val others = p.tags.filter { it != lead }.toIntArray()
         val top = TopK(k)
         var scored = 0L
         val u8 = store as? U8Store
-        val qb = (q as? QueryVector.U8)?.v
+        val qb = (q as? QueryVector.U8)?.v?.let { v -> u8?.prepare(v) }
         fun score(r: Int) {
             if (p.ranges.isNotEmpty() && !ranges!!.pass(r, p.ranges)) return
             val d = if (u8 != null && qb != null) u8.distInt(qb, r).toFloat() else store.dist(q, r)
             top.offer(d, r); scored++
         }
-        if (others.isEmpty()) {
-            // Cells were built at load time; a row deleted since is dropped by the live check.
-            for (c in cells) ti.cells[c].forEach { r: Int -> if (attrs.hasAll(r, p.tags)) score(r) }
-        } else attrs.withPostings(others) { bms ->
+        val leadOnly = intArrayOf(lead)
+        attrs.withPostings(if (others.isEmpty()) leadOnly else others) { bms ->
             if (bms.any { it == null }) return@withPostings
-            for (c in cells) {
-                val cand = if (bms.size == 1) RoaringBitmap.and(ti.cells[c], bms[0]!!) else RoaringBitmap.and(RoaringBitmap.and(ti.cells[c], bms[0]!!), bms[1]!!)
-                cand.forEach { r: Int -> if (attrs.hasAll(r, intArrayOf(lead))) score(r) }
+            var visited = 0
+            for (c in order) {
+                if (scored >= target || visited >= maxCells) break
+                visited++
+                val cand = when {
+                    others.isEmpty() -> ti.cells[c]
+                    bms.size == 1 -> RoaringBitmap.and(ti.cells[c], bms[0]!!)
+                    else -> RoaringBitmap.and(RoaringBitmap.and(ti.cells[c], bms[0]!!), bms[1]!!)
+                }
+                // Cells were built at load time; rows deleted or retagged since are dropped by the live check.
+                cand.forEach { r: Int -> if (attrs.hasAll(r, leadOnly)) score(r) }
             }
         }
         return top.result(scored)

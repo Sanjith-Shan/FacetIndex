@@ -55,6 +55,35 @@ public final class L2 {
     return sum;
   }
 
+  /**
+   * Squared L2 between signed int8 query {@code q} and the signed int8 row at {@code off}: the same
+   * kernel with sign extension, for vectors read straight from Lucene's {@code .vec} file (uint8
+   * values stored as x xor 0x80).
+   */
+  public static int i8(byte[] q, MemorySegment seg, long off, int d) {
+    IntVector acc0 = IntVector.zero(I256);
+    IntVector acc1 = IntVector.zero(I256);
+    int i = 0;
+    for (; i <= d - 16; i += 16) {
+      IntVector a0 = (IntVector) ByteVector.fromArray(B64, q, i).convertShape(VectorOperators.B2I, I256, 0);
+      IntVector b0 =
+          (IntVector) ByteVector.fromMemorySegment(B64, seg, off + i, ByteOrder.LITTLE_ENDIAN).convertShape(VectorOperators.B2I, I256, 0);
+      IntVector d0 = a0.sub(b0);
+      acc0 = acc0.add(d0.mul(d0));
+      IntVector a1 = (IntVector) ByteVector.fromArray(B64, q, i + 8).convertShape(VectorOperators.B2I, I256, 0);
+      IntVector b1 =
+          (IntVector) ByteVector.fromMemorySegment(B64, seg, off + i + 8, ByteOrder.LITTLE_ENDIAN).convertShape(VectorOperators.B2I, I256, 0);
+      IntVector d1 = a1.sub(b1);
+      acc1 = acc1.add(d1.mul(d1));
+    }
+    int sum = acc0.add(acc1).reduceLanes(VectorOperators.ADD);
+    for (; i < d; i++) {
+      int diff = q[i] - seg.get(ValueLayout.JAVA_BYTE, off + i);
+      sum += diff * diff;
+    }
+    return sum;
+  }
+
   /** Scalar reference for {@link #u8}. */
   public static int u8Scalar(byte[] q, MemorySegment seg, long off, int d) {
     int sum = 0;
