@@ -32,7 +32,7 @@ object PlannerBench {
         val threads = a.int("threads", 4)
         val k = 10
         val target = a.double("target", 0.9)
-        val margin = a.double("margin", 0.005)
+        val margin = a.double("margin", 0.01)
         val out = JsonlWriter(a.path("out"))
         val include = a.list("configs", "").toSet()
 

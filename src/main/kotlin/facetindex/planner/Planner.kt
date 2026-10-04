@@ -62,7 +62,7 @@ object CostModelFit {
         }
         for (t in 0..1) for (b in 0 until nb) {
             // Bins with very few observations are too noisy to trust.
-            if (cnt[t][b] < 5) { lat[t][b] = Double.NaN; rec[t][b] = Double.NaN } else {
+            if (cnt[t][b] < 20) { lat[t][b] = Double.NaN; rec[t][b] = Double.NaN } else {
                 lat[t][b] /= cnt[t][b]; rec[t][b] = hits[t][b].toDouble() / poss[t][b].coerceAtLeast(1)
             }
         }
