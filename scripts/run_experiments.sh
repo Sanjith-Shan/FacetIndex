@@ -46,7 +46,7 @@ case "${1:-}" in
                FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4                  --modes $m --rates 1000 --duration 150 --checkpoint 50 --via kafka --out results/exp5.jsonl || true
              done ;;
   exp9-q)    FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4                --modes A3 --rates 10000 --duration 150 --checkpoint 50 --via direct --experiment exp9 --out results/exp5.jsonl ;;
-  exp6-q)    FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4,$IVF16                --modes A3 --rates 1000 --qps 20,50,100 --query-strategies S2,S4,P --planner-model results/m3_cost_model.json                --planner-knob ${KNOB:?set KNOB from exp3} --duration 300 --checkpoint 100 --via kafka --experiment exp6 --out results/exp6.jsonl ;;
+  exp6-q)    FI_HEAP=5g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4 --modes A3 --rates 1000 --qps 20,50,100 --query-strategies S2,S4,P --pertag $PT --planner-model results/m3_cost_model.json                --planner-knob ${KNOB:?set KNOB from exp3} --duration 300 --checkpoint 150 --check-queries 100 --via kafka --experiment exp6 --out results/exp6.jsonl ;;
   exp1-10m)  # Private: all 100k queries. Public (calibration only): a 30k-query subset. Slow strategies on 20k.
              FI_HEAP=5g $FI sweep --data $Y --name yfcc-10M --queries private --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --strategies "$GRID10" --threads 4 --warmup 1000 --run exp1_10m --out results/exp1_10m.jsonl --experiment exp1
              FI_HEAP=5g $FI sweep --data $Y --name yfcc-10M --queries public --limit 30000 --index $D/idx/yfcc10m --ivf $IVF4,$IVF16 --pertag $PT                --strategies "$GRID10" --threads 4 --warmup 1000 --run exp1_10m --out results/exp1_10m_public.jsonl --experiment exp1_calibration
@@ -71,7 +71,7 @@ case "${1:-}" in
   exp9)      FI_HEAP=6g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4 \
                --modes A3 --rates 10000 --duration 120 --via direct --experiment exp9 --out results/exp5.jsonl ;;
   exp6)      FI_HEAP=6g $FI exp5 --data $Y --base-index $D/idx/yfcc9m_base --work-index $D/idx/work --ivf $IVF4,$IVF16 \
-               --modes A3 --rates 1000 --qps 20,50,100 --query-strategies S2,S4,P --planner-model results/m3_cost_model.json \
+               --modes A3 --rates 1000 --qps 20,50,100 --query-strategies S2,S4,P --pertag $PT --planner-model results/m3_cost_model.json \
                --duration 120 --via kafka --experiment exp6 --out results/exp6.jsonl ;;
   exp7)      $FI exp7 --data $Y1 --name yfcc-1M-slice --index $D/idx/yfcc1m --ivf $D/ivf/yfcc1m_c1024.ivf \
                --strategies "S0;S2:ef=64;S2:ef=64,filter=terms;S3:ef=64,threshold=60;S4:c=1024,nprobe=32|128" --out results/exp7.jsonl ;;

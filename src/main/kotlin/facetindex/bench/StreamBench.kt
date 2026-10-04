@@ -118,6 +118,8 @@ class YfccWorkload(
  * checkpoints.
  */
 object StreamBench {
+    private var pertagCache: facetindex.ivf.PerTagIvf? = null
+
     fun run(a: Args): Int {
         val ds = FilteredDataset(a.path("data"), "yfcc-10M")
         val baseIndex = a.path("base-index")
@@ -158,6 +160,12 @@ object StreamBench {
             val e = Engine(ds.base, attrs, object : SearcherSource {
                 override fun <T> withSearcher(body: (IndexSearcher) -> T): T = idx.withSearcher(body)
             }, ivfs.associateBy { it.k }, when (mode) { AttrMode.A1 -> FilterMode.TERMS; AttrMode.A2 -> FilterMode.DOCVALUES; AttrMode.A3 -> FilterMode.EXTERNAL })
+            a.pathOrNull("pertag")?.let { f ->
+                // S6 for the planner. Cells come from the static build: rows deleted since are dropped by
+                // the live check, rows inserted during the run are not in any cell (S6 misses them).
+                val s6 = facetindex.ivf.PerTagIvfStrategy(ds.base, null, attrs, pertagCache ?: facetindex.ivf.PerTagIvf.load(f).also { pertagCache = it }, PreFilterBruteForce(e))
+                e.extraStrategies["S6"] = { _ -> s6 }
+            }
             val strategies = qStrategies.associateWith { s ->
                 when (s) {
                     "S2" -> LuceneFilteredHnsw(e, "S2", 0) to SearchBudget(ef = a.int("ef", 64))

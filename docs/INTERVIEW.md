@@ -94,4 +94,27 @@ the catalog changes.
 
 ## 2. Measured answers
 
-Filled from `NUMBERS.md` below.
+All on yfcc-10M, the 10k stratified private sample, mini PC, 4 threads unless stated.
+
+- **Post-filter recall loss.** S1 (k' = k / selectivity x 2, capped at 10,000) reached 0.442 overall
+  (`results/exp1_10m.jsonl`). It never reaches 0.9 below 1% selectivity, but above 10% it is the
+  fastest strategy at 0.9 (1,377 QPS equivalent), because a tenth of the corpus matches.
+- **Lucene default vs ACORN-1.** S2 at beam 16: 0.960 at 470 QPS; S3 (threshold 60) at beam 128:
+  0.925 at 408 QPS. At equal beam S3 is faster and less accurate (beam 32: S3 0.856 at 520 vs S2
+  0.980 at 415). S3 was fastest of the graph paths in the 0.01 to 0.1% bin (2,006 vs S2's 1,213).
+- **IVF trade.** S4 with 4,096 cells: 0.883 at nprobe 64 (739 QPS), 0.963 at 256 (278 QPS); with
+  16,384 cells: 0.904 at 256 (432 QPS). It is the best strategy for 0.1 to 1% selectivity
+  (1,256 QPS equivalent).
+- **Per-tag IVF (S6).** 0.907 at 493 QPS with a 32,000-candidate target, the best single
+  configuration at 0.9; 1,326 tags got their own IVF, 231 MB, built in 500 s
+  (`results/m2_build.jsonl`).
+- **Planner.** Calibrated on public, scored on private: 0.912 at 2,945 QPS, 6.0x the best single
+  configuration and 2.9x the FAISS rule rebuilt in FacetIndex (0.952 at 1,018). Mean decision cost
+  77 us. Misroutes against the 9-of-10 oracle: 63% of choices differ, 20% of queries fall below 0.9
+  on that query, 4.7% cost more than twice the oracle's latency (`results/m3_exp3.jsonl`).
+- **Against FAISS on the same box.** FAISS's best at 0.9 on 2 vCPUs: 210.1 QPS; the planner pinned
+  to 2 cores: 1,151.4 QPS, 5.5x (`results/m1_faiss.jsonl`, `results/m3_exp3.jsonl`). Caveats: FAISS
+  trained on a 1M sample, not its default 4.2M; its first run shared WSL with another job.
+- **Build costs.** 10M HNSW (M 16, beam 100): 85 min to add 9M documents and 3 h to force-merge them
+  under memory pressure, then 3 min and 39 min for the last 1M (`results/m2_build.jsonl`). k-means
+  with 16,384 cells: 57 min training on a 1M sample and 37 min assigning 10M.
