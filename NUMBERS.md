@@ -76,12 +76,17 @@ saturated the box: each refresh rewrites the doc-value field for the 9M-document
 2.97 to 3.37 GB in 150 s) and its filter scans every document. Earlier A3 rows measured as the
 first run in a fresh process (a cold start) were archived outside the repo (`BUG_LOG.md` #10).
 
-**exp6 (mixed workload) was saturated.** At 20 queries/s alternating the planner, S2 and S4 while
-1,000 SetAttrs/s streamed through Kafka, query latency from intended send time was 36.4 s at the
-median and 128 s at p99 for all three, and produce-to-applied 52.3 s at the median
-(`results/exp6.jsonl`): the box was paging (the process working set was 7.6 GB with the 9M working
-index, the base vectors and the shared WSL VM competing for 14.9 GB). The higher arrival rates were
-not run. This is a capacity limit of this box with this layout, not a latency figure.
+**exp6 (mixed workload) saturated the box at both rates tried.** With the planner, S2 and S4
+alternating in one open-loop query pool while 1,000 SetAttrs/s, 100 inserts/s and 100 deletes/s
+streamed through Kafka for 300 s, query latency from intended send time had a median of 36.4 s at
+20 queries/s and 45.6 s at 10 queries/s (p99 128 s and 101 s), for all three strategies alike
+(`results/exp6.jsonl`). The updates still kept up (1,000/s applied, no backlog) and checkpoint
+recall held (planner 0.894, S2 0.993). The same box served 10 queries/s of S2 and S4 alone during
+exp5 with an 18.7 ms median, so the difference is the planner's mix: calibrated on the static index,
+it sends about a quarter of the queries to post-filtering with fetches of up to 10,000 candidates,
+which are expensive, and everything queues behind them; memory pressure (a 7.6 GB working set on
+14.9 GB) adds to it. So there is no clean mixed-load p99 from this run; the finding is that a
+planner calibrated without update load can overload a live index.
 
 ## Data and ground truth (`results/m0_data.jsonl`)
 

@@ -133,3 +133,8 @@ All on yfcc-10M, the 10k stratified private sample, mini PC, 4 threads unless st
     32) 0.77 to 0.79, against exact answers over the live set.
 - **What Kafka costs (exp9).** The same A3 run at 10,000/s through the in-process twin: query p99
   0.25 s (S2) against 1.33 s through Kafka; the broker and consumer took CPU from the queries.
+- **Mixed-load p99 (exp6).** Not clean: with the planner, S2 and S4 sharing one open-loop pool at 10
+  and 20 queries/s under 1,000 updates/s, medians were 46 s and 36 s (`results/exp6.jsonl`); S2 and
+  S4 alone at 10 queries/s had an 18.7 ms median in exp5. The planner's post-filter picks (fetch up to
+  10,000) are calibrated on a static index and too expensive under load. What shared the cores: the
+  query pool, the consumer, the NRT refresher and merges in one JVM, and the Kafka broker in WSL.

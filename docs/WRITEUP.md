@@ -132,8 +132,12 @@ and flip tags at the stated rate; not a competition track), measured over 150 s 
 - Running the same 10,000/s A3 workload in process, without Kafka, cut the S2 query p99 from 1.33 s
   to 0.25 s: on a 4-core box the broker and the consumer compete with the queries for CPU.
 
-A mixed-load run at 20 queries/s on top of 1,000 updates/s saturated the box (latencies in tens of
-seconds while it paged), so there is no clean p99 under mixed load from this machine.
+Mixed-load runs with the planner in the query pool (10 and 20 queries/s on top of 1,000 updates/s)
+saturated the box: medians of 46 and 36 s from intended send time, even though S2 and S4 alone had
+served 10 queries/s at an 18.7 ms median. The planner, calibrated on a static index, sends about a
+quarter of the queries to post-filtering with fetches of up to 10,000 candidates, and the shared pool
+queues behind them. A planner for a live index needs its costs measured under update load, and a
+budget on per-query work.
 
 ## What I would do next
 
