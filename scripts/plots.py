@@ -79,25 +79,34 @@ def curve_figure(fname, title, series, note):
 
 
 def exp1():
-    for fname, label in [("exp1_10m.jsonl", "yfcc-10M"), ("exp1_1m.jsonl", "1M slice")]:
-        series = defaultdict(list)
-        for r in rows(fname):
-            if r.get("repeat", 1) != 1:
-                continue
+    data = [r for r in rows("exp1_10m.jsonl") if r.get("repeat", 1) == 1]
+    series = defaultdict(list)
+    for r in data:
+        if r["threads"] == 4:
             series[r["strategy"]].append((r["recall_at_10"], r["qps"]))
-        for r in rows("m1_faiss.jsonl"):
-            if r.get("query_set") == "private" and ("10M" in label) == (r.get("nb", 10_000_000) >= 10_000_000):
-                series["faiss"].append((r["recall_at_10"], r["qps"]))
-        for r in rows("m3_exp3.jsonl"):
-            if r.get("planner") == "fitted" and r.get("dataset", "").startswith("yfcc-10M" if "10M" in label else "yfcc-1M"):
-                series["planner"].append((r["recall_at_10"], r["qps"]))
-        if series:
-            curve_figure(f"exp1_{'10m' if '10M' in label else '1m'}.png", f"Filtered search, {label}, private queries",
-                         series, f"{MACHINE}; frontier of each strategy's configurations; FAISS rerun on the same box")
+    for r in rows("m3_exp3.jsonl"):
+        if r.get("planner") == "fitted" and r.get("threads") == 4:
+            series["planner"].append((r["recall_at_10"], r["qps"]))
+    if series:
+        curve_figure("exp1_strategies.png", "yfcc-10M, 10k stratified private queries, 4 threads", series,
+                     f"{MACHINE}; best configurations per strategy; results/exp1_10m.jsonl, m3_exp3.jsonl")
+    # Same-core-count comparison with the FAISS baseline (WSL is capped at 2 vCPUs on this box).
+    s2 = defaultdict(list)
+    for r in rows("m1_faiss.jsonl"):
+        s2["faiss"].append((r["recall_at_10"], r["qps"]))
+    for r in rows("m3_exp3.jsonl"):
+        if r.get("planner") == "fitted" and r.get("threads") == 2 and "pinned" in r.get("machine", {}).get("label", ""):
+            s2["planner"].append((r["recall_at_10"], r["qps"]))
+    for r in data:
+        if r["threads"] == 2 and r["strategy"] in ("S2", "S6", "S4"):
+            s2[r["strategy"]].append((r["recall_at_10"], r["qps"]))
+    if s2:
+        curve_figure("exp1_vs_faiss.png", "Against the FAISS filter baseline: 2 threads each", s2,
+                     f"{MACHINE}; FAISS: WSL, 2 vCPU; planner also pinned to 2 cores; results/m1_faiss.jsonl, m3_exp3.jsonl")
 
 
 def exp2():
-    data = rows("exp1_10m.jsonl")
+    data = [r for r in rows("exp1_10m.jsonl") if r["threads"] == 4]
     if not data:
         return
     bins = ["<0.01%", "0.01-0.1%", "0.1-1%", "1-10%", ">10%"]
@@ -117,7 +126,7 @@ def exp2():
     ax.set_xticks(range(len(bins)))
     ax.set_xticklabels(bins)
     ax.set_yscale("log")
-    style(ax, "Best throughput at recall@10 >= 0.9, by selectivity (yfcc-10M, private)", "selectivity bin", "QPS equivalent (log)")
+    style(ax, "Best throughput at recall@10 >= 0.9 by selectivity bin (yfcc-10M, 4 threads)", "selectivity bin", "QPS equivalent (log)")
     ax.legend(frameon=False, fontsize=9, ncol=4)
     fig.text(0.01, 0.01, f"{MACHINE}; missing bar: the strategy never reaches 0.9 in that bin", fontsize=7.5, color=TEXT2)
     fig.tight_layout(rect=(0, 0.04, 1, 1))
@@ -126,22 +135,24 @@ def exp2():
 
 
 def exp5():
-    data = rows("exp5.jsonl")
+    data = [r for r in rows("exp5.jsonl") if r["experiment"] == "exp5"]
     if not data:
         return
-    fig, ax = plt.subplots(figsize=(7, 4.2), dpi=130)
-    colors = {"A1": "#2a78d6", "A2": "#eb6834", "A3": "#1baf7a"}
-    for mode in ["A1", "A2", "A3"]:
-        pts = sorted((r["set_attrs_rate"], r["achieved_set_attrs_rate"]) for r in data if r["mode"] == mode and r.get("via") == "kafka" and r["set_attrs_rate"] > 0)
-        if pts:
-            ax.plot([p[0] for p in pts], [p[1] for p in pts], color=colors[mode], marker="o", markersize=7, linewidth=2, label=mode)
-    lim = [100, 10000]
-    ax.plot(lim, lim, color="#b8b7b0", linewidth=1, linestyle="--")
-    ax.set_xscale("log")
+    fig, ax = plt.subplots(figsize=(7.5, 4.2), dpi=130)
+    labels, offered, applied = [], [], []
+    for r in data:
+        labels.append(f"{r['mode']} {int(r['set_attrs_rate']):,}/s")
+        offered.append(r["set_attrs_rate"])
+        applied.append(r["achieved_set_attrs_rate"])
+    xs = range(len(labels))
+    ax.bar([x - 0.2 for x in xs], offered, width=0.38, color="#b8b7b0", label="offered")
+    ax.bar([x + 0.2 for x in xs], applied, width=0.38, color="#2a78d6", label="applied")
+    ax.set_xticks(list(xs))
+    ax.set_xticklabels(labels)
     ax.set_yscale("log")
-    style(ax, "Attribute updates applied per second vs offered (constructed workload)", "offered SetAttrs/s", "applied SetAttrs/s")
+    style(ax, "SetAttrs applied per second through Kafka (constructed workload)", "attribute path and offered rate", "events/s (log)")
     ax.legend(frameon=False, fontsize=9)
-    fig.text(0.01, 0.01, f"{MACHINE}; through Kafka; dashed line = keeping up", fontsize=7.5, color=TEXT2)
+    fig.text(0.01, 0.01, f"{MACHINE}; 9M-item start, 100 inserts/s and 100 deletes/s alongside; results/exp5.jsonl", fontsize=7.5, color=TEXT2)
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     fig.savefig(os.path.join(IMG, "exp5_updates.png"))
     plt.close(fig)
@@ -163,6 +174,5 @@ def exp4():
 if __name__ == "__main__":
     exp1()
     exp2()
-    exp4()
     exp5()
     print("figures in", IMG)

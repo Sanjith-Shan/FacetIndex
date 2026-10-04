@@ -103,10 +103,15 @@ def faiss():
     if not data:
         return
     print("\n### FAISS filter baseline rerun on the mini PC (`results/m1_faiss.jsonl`)\n")
-    print("| query set | nprobe | mt_threshold | threads | recall@10 | QPS |")
-    print("|---|---|---|---|---|---|")
+    print("| run | nprobe | mt_threshold | threads | repeat | recall@10 | QPS | WSL loadavg at start |")
+    print("|---|---|---|---|---|---|---|---|")
     for r in data:
-        print(f"| {r.get('query_set')} | {r.get('nprobe')} | {r.get('mt_threshold')} | {r.get('threads')} | {r.get('recall_at_10', 0):.4f} | {r.get('qps', 0):,.1f} |")
+        print(f"| {r.get('tag')} | {r.get('nprobe')} | {r.get('mt_threshold')} | {r.get('threads')} | {r.get('repeat')} | {r.get('recall_at_10', 0):.4f} | {r.get('qps', 0):,.1f} | {r.get('loadavg_start')} |")
+    ok = [r for r in data if r.get("recall_at_10", 0) >= 0.9]
+    if ok:
+        b = max(ok, key=lambda r: r["qps"])
+        print()
+        print(f"Highest FAISS QPS at recall@10 >= 0.90 across all runs: **{b['qps']:,.1f}** (nprobe {b['nprobe']}, mt_threshold {b['mt_threshold']}, recall {b['recall_at_10']:.4f}, run `{b.get('tag')}` repeat {b.get('repeat')}).")
 
 
 def exp3():
@@ -114,18 +119,21 @@ def exp3():
     if not data:
         return
     print("\n### Planner (exp3, `results/m3_exp3.jsonl`)\n")
-    print("| planner | setting | recall@10 | QPS | QPS from latencies | notes |")
-    print("|---|---|---|---|---|---|")
+    print("| planner | setting | threads / machine label | recall@10 | QPS | recall@10, QPS (population-weighted) | QPS from latencies | notes |")
+    print("|---|---|---|---|---|---|---|---|")
     for r in data:
         p = r.get("planner")
+        lab = f"{r.get('threads', '')} / {r.get('machine', {}).get('label', '')}"
+        wr, wq = weighted(r) if r.get("bins") else (None, None)
+        wtxt = f"{wr:.4f}, {wq:,.1f}" if wr else ""
         if p == "fitted":
-            print(f"| fitted ({r['rule']}) | knob {r['knob']:.3g}{' (calibrated)' if r.get('calibrated') else ''} | {r['recall_at_10']:.4f} | {r['qps']:,.1f} | {r.get('qps_equiv_from_latency', 0):,.1f} | mix {r.get('choice_mix')}, overhead mean {r.get('planner_overhead_us_mean', 0):.1f} us |")
+            print(f"| fitted ({r['rule']}) | knob {r['knob']:.4g}{' (calibrated)' if r.get('calibrated') else ''} | {lab} | {r['recall_at_10']:.4f} | {r['qps']:,.1f} | {wtxt} | {r.get('qps_equiv_from_latency', 0):,.1f} | mix {r.get('choice_mix')}, overhead mean {r.get('planner_overhead_us_mean', 0):.1f} us, p99 {r.get('planner_overhead_us_p99', 0):.1f} us |")
         elif p == "faiss_rule":
-            print(f"| FAISS rule in FacetIndex | mt {r['mt_threshold']}, `{r['ivf']}` | {r['recall_at_10']:.4f} | {r['qps']:,.1f} | | |")
+            print(f"| FAISS rule in FacetIndex | mt {r['mt_threshold']}, `{r['ivf']}` | {lab} | {r['recall_at_10']:.4f} | {r['qps']:,.1f} | {wtxt} | | |")
         elif p == "oracle":
-            print(f"| oracle | pass {r['pass_fraction']} | {r['recall_at_10']:.4f} | | {r['qps_equiv_from_latency']:,.1f} | {r.get('strategy_mix')} |")
+            print(f"| oracle | pass {r['pass_fraction']} | {lab} | {r['recall_at_10']:.4f} | | | {r['qps_equiv_from_latency']:,.1f} | {r.get('strategy_mix')} |")
         elif p == "misroutes":
-            print(f"| misroutes | {r['queries']} queries | | | | differs from oracle {r['differs_from_oracle']}, over 2x oracle latency {r['more_than_2x_oracle_latency']}, below 0.9 on the query {r['below_0_9_recall_on_query']} |")
+            print(f"| misroutes | {r['queries']} queries | {lab} | | | | | differs from oracle {r['differs_from_oracle']}, over 2x oracle latency {r['more_than_2x_oracle_latency']}, below 0.9 on the query {r['below_0_9_recall_on_query']} |")
 
 
 def exp5(name, label):
