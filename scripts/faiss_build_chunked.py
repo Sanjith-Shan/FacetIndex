@@ -38,6 +38,7 @@ def main():
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--chunk", type=int, default=500_000)
     ap.add_argument("--seed", type=int, default=1234)
+    ap.add_argument("--ntrain", type=int, default=0, help="training sample size (0: 256 x nlist, what FAISS itself would use)")
     ap.add_argument("--out", default=DATA + "/results/faiss_build.jsonl")
     args = ap.parse_args()
     sys.path.insert(0, BUILD)
@@ -64,7 +65,7 @@ def main():
 
     index = faiss.index_factory(d, args.indexkey)
     nlist = faiss.extract_index_ivf(index).nlist
-    ntrain = min(n, 256 * nlist)
+    ntrain = min(n, args.ntrain or 256 * nlist)
     rs = np.random.RandomState(args.seed)
     sample = np.sort(rs.choice(n, ntrain, replace=False))
     print("train on", ntrain, flush=True)
@@ -90,7 +91,7 @@ def main():
         "signatures_s": t_sig, "train_s": t_train, "add_s": t_add, "total_s": time.time() - t0,
         "peak_rss_gb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1048576,
         "faiss": faiss.__version__, "index_path": args.index_path,
-        "note": "chunked build, same factory string, training size and ids as the benchmark's FAISS.fit; WSL2 Ubuntu 24.04 on the mini PC (2 vCPU, 6 GB per .wslconfig)",
+        "note": ("chunked build, same factory string and ids as the benchmark's FAISS.fit; training sample " + str(ntrain) + (" (FAISS default 256 x nlist)" if ntrain == 256 * nlist else " (smaller than FAISS's default 256 x nlist, for time)")) + "; WSL2 Ubuntu 24.04 on the mini PC (2 vCPU, 6 GB per .wslconfig)",
         "loadavg": open("/proc/loadavg").read().split()[:3],
     }
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
