@@ -99,3 +99,43 @@ and queries**. For context only, and on different hardware (the competition's 8-
 v5), the winning entry was about 11.6x FAISS and the closed-source leaders about 28x; FacetIndex's
 ratio is not directly comparable to those, since the hardware, the FAISS training sample and the
 query sample all differ.
+
+## Updates while serving
+
+A live catalog changes all the time, and the question is whether an attribute change has to touch
+the vector. FacetIndex streams inserts, deletes and attribute changes through Kafka into one
+idempotent consumer and implements three ways for the filter to see a tag change:
+
+- **A1, tags as Lucene terms:** `updateDocument`, which re-indexes the whole document and re-inserts
+  its vector into the HNSW graph.
+- **A2, tags as doc values:** `updateBinaryDocValue`, which leaves the vector alone.
+- **A3, an external store:** per-tag RoaringBitmaps and per-row tag arrays outside Lucene, updated in
+  place under a per-row seqlock, which Lucene sees through a never-cached filter.
+
+On a constructed workload (start from 9M items, stream the rest in at 100 inserts/s, delete 100/s,
+and flip tags at the stated rate; not a competition track), measured over 150 s windows
+(`results/exp5.jsonl`):
+
+![Attribute updates](img/exp5_updates.png)
+
+- A3 kept up at 10,000 SetAttrs/s through Kafka (9,999.7/s applied, no backlog), and an attribute
+  change reached the next query in 16.7 ms at the median. The tail is long (p99 2.6 s at 10,000/s,
+  20 s at 100/s); it does not grow with the rate, which points at the single consumer thread
+  stalling behind the Lucene writes for inserts and deletes it also applies.
+- A1 also kept up at 1,000/s, but merged for 23.8 s of every minute against 2 to 7 s for A3: every
+  tag change rebuilt a document and re-inserted its vector.
+- A2 broke down at 1,000/s: Lucene's write-to-visible p99 reached 235 s and the index grew from 2.97
+  to 3.37 GB in 150 s, because every refresh writes a new generation of the doc-value field for the
+  whole 9M-document segment, and the doc-value filter has to scan every document.
+- Filtered recall at the checkpoints did not drift during the updates (S2 0.991 to 0.993).
+- Running the same 10,000/s A3 workload in process, without Kafka, cut the S2 query p99 from 1.33 s
+  to 0.25 s: on a 4-core box the broker and the consumer compete with the queries for CPU.
+
+A mixed-load run at 20 queries/s on top of 1,000 updates/s saturated the box (latencies in tens of
+seconds while it paged), so there is no clean p99 under mixed load from this machine.
+
+## What I would do next
+
+Split the consumer so attribute changes never wait behind Lucene writes; measure range predicates
+(implemented, not measured); run the official streaming runbook; rerun the headline on the
+competition's VM type (`scripts/azure_d8lds_v5.md`).
